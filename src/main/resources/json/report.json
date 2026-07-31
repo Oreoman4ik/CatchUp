@@ -1,0 +1,31 @@
+{
+  "errorId": "7c12c42e-86ee-43b0-8324-9a56bf633ed4",
+  "timestamp": "2026-07-30T10:42:15.018Z",
+  "status": 404,
+  "message": "Компонент не найден",
+  "errorType": "COMPONENT_NOT_FOUND",
+  "currentService": "ServiceA",
+  "chain": [
+    {
+      "service": "ServiceB",
+      "component": "ComponentCatalog",
+      "operation": "findComponentById",
+      "exceptionType": "COMPONENT_NOT_FOUND",
+      "message": "Компонент не найден",
+      "timestamp": "2026-07-30T10:42:15.018Z",
+      "status": 404
+    },
+    {
+      "service": "ServiceA",
+      "component": "ComponentController",
+      "operation": "getComponent",
+      "exceptionType": "UPSTREAM_ERROR",
+      "message": "Не удалось получить компонент",
+      "timestamp": "2026-07-30T10:42:15.119Z",
+      "status": 404
+    }
+  ],
+  "details": {
+    "resource": "COMPONENT"
+  }
+}
