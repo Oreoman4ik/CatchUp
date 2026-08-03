@@ -2,24 +2,27 @@ package ru.oreoman4ik.catchup.model;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
- * Публичный элемент цепочки распространения ошибки.
+ * Неизменяемый публичный элемент цепочки распространения ошибки.
  *
- * <p>{@code exceptionType} в JSON является стабильным публичным
- * кодом причины, а не именем Java-класса исключения.</p>
+ * <p>{@code exceptionType} в JSON содержит стабильный публичный
+ * код причины, а не имя Java-класса исключения.</p>
  *
- * <p>{@code message} предназначено только для внешнего клиента
- * и не должно формироваться из {@link Throwable#getMessage()}.</p>
+ * <p>{@code message} должен поступать из контролируемого каталога
+ * публичных сообщений. Нельзя передавать в него результат
+ * {@link Throwable#getMessage()}.</p>
  *
- * <p>{@code status} содержит числовой HTTP-статус. Поле
- * необязательно: {@code null} означает, что на данном шаге
- * цепочки HTTP-статус ещё не был определён.</p>
+ * <p>{@code status} содержит числовой HTTP-статус ошибки от 400
+ * до 599. Значение {@code null} допустимо, если на этом шаге
+ * цепочки статус ещё не был определён.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -44,7 +47,10 @@ public final class ChainElement {
             @JsonProperty(value = "operation", required = true)
             String operation,
 
-            @JsonProperty(value = "exceptionType", required = true)
+            @JsonProperty(
+                    value = "exceptionType",
+                    required = true
+            )
             @JsonAlias({"exception_type", "causeCode"})
             String causeCode,
 
@@ -53,6 +59,13 @@ public final class ChainElement {
             String publicMessage,
 
             @JsonProperty(value = "timestamp", required = true)
+            @JsonFormat(
+                    shape = JsonFormat.Shape.STRING,
+                    pattern =
+                            ErrorModelValidation.TIMESTAMP_PATTERN,
+                    timezone =
+                            ErrorModelValidation.UTC_TIME_ZONE
+            )
             Instant timestamp,
 
             @JsonProperty("status")
@@ -92,10 +105,11 @@ public final class ChainElement {
                 timestamp
         );
 
-        this.httpStatus = ErrorModelValidation.nullableHttpStatus(
-                "status",
-                httpStatus
-        );
+        this.httpStatus =
+                ErrorModelValidation.nullableHttpStatus(
+                        "status",
+                        httpStatus
+                );
     }
 
     private ChainElement(Builder builder) {
@@ -130,9 +144,8 @@ public final class ChainElement {
     }
 
     /**
-     * Возвращает публичный код причины.
-     *
-     * @return код вида {@code BOOK_NOT_FOUND}
+     * @return стабильный публичный код вида
+     * {@code COMPONENT_NOT_FOUND}
      */
     @JsonProperty("exceptionType")
     public String getCauseCode() {
@@ -140,7 +153,7 @@ public final class ChainElement {
     }
 
     /**
-     * Возвращает безопасное сообщение для внешнего клиента.
+     * @return контролируемое сообщение для внешнего клиента
      */
     @JsonProperty("message")
     public String getPublicMessage() {
@@ -148,17 +161,70 @@ public final class ChainElement {
     }
 
     @JsonProperty("timestamp")
+    @JsonFormat(
+            shape = JsonFormat.Shape.STRING,
+            pattern = ErrorModelValidation.TIMESTAMP_PATTERN,
+            timezone = ErrorModelValidation.UTC_TIME_ZONE
+    )
     public Instant getTimestamp() {
         return timestamp;
     }
 
     /**
-     * @return числовой HTTP-статус или {@code null}, если статус
-     * ещё не определён
+     * @return числовой HTTP-статус ошибки или {@code null}, если
+     * статус на этом шаге не определён
      */
     @JsonProperty("status")
     public Integer getHttpStatus() {
         return httpStatus;
+    }
+
+    @Override
+    public boolean equals(Object object) {
+        if (this == object) {
+            return true;
+        }
+
+        if (!(object instanceof ChainElement that)) {
+            return false;
+        }
+
+        return service.equals(that.service)
+                && component.equals(that.component)
+                && operation.equals(that.operation)
+                && causeCode.equals(that.causeCode)
+                && publicMessage.equals(that.publicMessage)
+                && timestamp.equals(that.timestamp)
+                && Objects.equals(
+                httpStatus,
+                that.httpStatus
+        );
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                service,
+                component,
+                operation,
+                causeCode,
+                publicMessage,
+                timestamp,
+                httpStatus
+        );
+    }
+
+    @Override
+    public String toString() {
+        return "ChainElement{"
+                + "service='" + service + '\''
+                + ", component='" + component + '\''
+                + ", operation='" + operation + '\''
+                + ", causeCode='" + causeCode + '\''
+                + ", publicMessage='" + publicMessage + '\''
+                + ", timestamp=" + timestamp
+                + ", httpStatus=" + httpStatus
+                + '}';
     }
 
     public static final class Builder {

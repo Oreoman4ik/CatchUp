@@ -4,10 +4,10 @@
   "status": 404,
   "message": "Компонент не найден",
   "errorType": "COMPONENT_NOT_FOUND",
-  "currentService": "ServiceA",
+  "currentService": "service-a",
   "chain": [
     {
-      "service": "ServiceB",
+      "service": "service-b",
       "component": "ComponentCatalog",
       "operation": "findComponentById",
       "exceptionType": "COMPONENT_NOT_FOUND",
@@ -16,7 +16,7 @@
       "status": 404
     },
     {
-      "service": "ServiceA",
+      "service": "service-a",
       "component": "ComponentController",
       "operation": "getComponent",
       "exceptionType": "UPSTREAM_ERROR",
