@@ -1,6 +1,5 @@
 package ru.oreoman4ik.catchup.model;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -15,17 +14,8 @@ import java.util.UUID;
 /**
  * Неизменяемый публичный ответ об ошибке.
  *
- * <p>{@code errorType} в JSON содержит стабильный публичный код,
- * например {@code COMPONENT_NOT_FOUND}, а не имя Java-класса
- * исключения.</p>
- *
- * <p>{@code message} должен формироваться из контролируемого
- * каталога публичных сообщений. Модель не очищает содержимое
- * {@code exception.getMessage()} и такое значение передавать в
- * ответ запрещено.</p>
- *
- * <p>Все поля, кроме {@code details}, обязательны. Цепочка должна
- * содержать хотя бы один элемент.</p>
+ * <p>Java- и JSON-контракт используют одинаковые названия:
+ * {@code status}, {@code message} и {@code errorCode}.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -35,8 +25,8 @@ public final class ErrorResponse {
 
     private final UUID errorId;
     private final Instant timestamp;
-    private final int httpStatus;
-    private final String publicMessage;
+    private final int status;
+    private final String message;
     private final String errorCode;
     private final String currentService;
     private final List<ChainElement> chain;
@@ -45,7 +35,6 @@ public final class ErrorResponse {
     @JsonCreator
     private ErrorResponse(
             @JsonProperty(value = "errorId", required = true)
-            @JsonAlias("error_id")
             UUID errorId,
 
             @JsonProperty(value = "timestamp", required = true)
@@ -59,25 +48,18 @@ public final class ErrorResponse {
             Instant timestamp,
 
             @JsonProperty(value = "status", required = true)
-            @JsonAlias("httpStatus")
-            int httpStatus,
+            int status,
 
             @JsonProperty(value = "message", required = true)
-            @JsonAlias("publicMessage")
-            String publicMessage,
+            String message,
 
-            @JsonProperty(
-                    value = "errorType",
-                    required = true
-            )
-            @JsonAlias({"type_exception", "errorCode"})
+            @JsonProperty(value = "errorCode", required = true)
             String errorCode,
 
             @JsonProperty(
                     value = "currentService",
                     required = true
             )
-            @JsonAlias({"current_service", "service"})
             String currentService,
 
             @JsonProperty(value = "chain", required = true)
@@ -96,19 +78,18 @@ public final class ErrorResponse {
                 timestamp
         );
 
-        this.httpStatus = ErrorModelValidation.httpStatus(
+        this.status = ErrorModelValidation.httpStatus(
                 "status",
-                httpStatus
+                status
         );
 
-        this.publicMessage =
-                ErrorModelValidation.publicMessage(
-                        "message",
-                        publicMessage
-                );
+        this.message = ErrorModelValidation.publicMessage(
+                "message",
+                message
+        );
 
         this.errorCode = ErrorModelValidation.publicCode(
-                "errorType",
+                "errorCode",
                 errorCode
         );
 
@@ -133,8 +114,8 @@ public final class ErrorResponse {
         this(
                 builder.errorId,
                 builder.timestamp,
-                builder.httpStatus,
-                builder.publicMessage,
+                builder.status,
+                builder.message,
                 builder.errorCode,
                 builder.currentService,
                 builder.chain,
@@ -151,11 +132,6 @@ public final class ErrorResponse {
         return errorId;
     }
 
-    /**
-     * @return время возникновения исходной ошибки в UTC; JSON
-     * всегда использует формат
-     * {@code yyyy-MM-dd'T'HH:mm:ss.SSS'Z'}
-     */
     @JsonProperty("timestamp")
     @JsonFormat(
             shape = JsonFormat.Shape.STRING,
@@ -166,27 +142,17 @@ public final class ErrorResponse {
         return timestamp;
     }
 
-    /**
-     * @return итоговый числовой HTTP-статус ошибки от 400 до 599
-     */
     @JsonProperty("status")
-    public int getHttpStatus() {
-        return httpStatus;
+    public int getStatus() {
+        return status;
     }
 
-    /**
-     * @return контролируемое сообщение для внешнего клиента
-     */
     @JsonProperty("message")
-    public String getPublicMessage() {
-        return publicMessage;
+    public String getMessage() {
+        return message;
     }
 
-    /**
-     * @return публичный код вида {@code COMPONENT_NOT_FOUND}, но
-     * не имя Java-класса исключения
-     */
-    @JsonProperty("errorType")
+    @JsonProperty("errorCode")
     public String getErrorCode() {
         return errorCode;
     }
@@ -196,19 +162,11 @@ public final class ErrorResponse {
         return currentService;
     }
 
-    /**
-     * @return неизменяемая непустая цепочка, упорядоченная от
-     * места возникновения ошибки к текущему сервису
-     */
     @JsonProperty("chain")
     public List<ChainElement> getChain() {
         return chain;
     }
 
-    /**
-     * @return типизированные публичные данные или {@code null},
-     * если дополнительных сведений нет
-     */
     @JsonProperty("details")
     public ErrorDetails getDetails() {
         return details;
@@ -224,10 +182,10 @@ public final class ErrorResponse {
             return false;
         }
 
-        return httpStatus == that.httpStatus
+        return status == that.status
                 && errorId.equals(that.errorId)
                 && timestamp.equals(that.timestamp)
-                && publicMessage.equals(that.publicMessage)
+                && message.equals(that.message)
                 && errorCode.equals(that.errorCode)
                 && currentService.equals(that.currentService)
                 && chain.equals(that.chain)
@@ -239,8 +197,8 @@ public final class ErrorResponse {
         return Objects.hash(
                 errorId,
                 timestamp,
-                httpStatus,
-                publicMessage,
+                status,
+                message,
                 errorCode,
                 currentService,
                 chain,
@@ -253,8 +211,8 @@ public final class ErrorResponse {
         return "ErrorResponse{"
                 + "errorId=" + errorId
                 + ", timestamp=" + timestamp
-                + ", httpStatus=" + httpStatus
-                + ", publicMessage='" + publicMessage + '\''
+                + ", status=" + status
+                + ", message='" + message + '\''
                 + ", errorCode='" + errorCode + '\''
                 + ", currentService='" + currentService + '\''
                 + ", chain=" + chain
@@ -266,8 +224,8 @@ public final class ErrorResponse {
 
         private UUID errorId;
         private Instant timestamp;
-        private int httpStatus;
-        private String publicMessage;
+        private int status;
+        private String message;
         private String errorCode;
         private String currentService;
         private List<ChainElement> chain;
@@ -286,13 +244,13 @@ public final class ErrorResponse {
             return this;
         }
 
-        public Builder httpStatus(int httpStatus) {
-            this.httpStatus = httpStatus;
+        public Builder status(int status) {
+            this.status = status;
             return this;
         }
 
-        public Builder publicMessage(String publicMessage) {
-            this.publicMessage = publicMessage;
+        public Builder message(String message) {
+            this.message = message;
             return this;
         }
 

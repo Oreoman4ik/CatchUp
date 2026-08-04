@@ -3,14 +3,14 @@
   "timestamp": "2026-07-30T10:42:15.018Z",
   "status": 404,
   "message": "Компонент не найден",
-  "errorType": "COMPONENT_NOT_FOUND",
+  "errorCode": "COMPONENT_NOT_FOUND",
   "currentService": "service-a",
   "chain": [
     {
       "service": "service-b",
       "component": "ComponentCatalog",
       "operation": "findComponentById",
-      "exceptionType": "COMPONENT_NOT_FOUND",
+      "errorCode": "COMPONENT_NOT_FOUND",
       "message": "Компонент не найден",
       "timestamp": "2026-07-30T10:42:15.018Z",
       "status": 404
@@ -19,7 +19,7 @@
       "service": "service-a",
       "component": "ComponentController",
       "operation": "getComponent",
-      "exceptionType": "UPSTREAM_ERROR",
+      "errorCode": "UPSTREAM_ERROR",
       "message": "Не удалось получить компонент",
       "timestamp": "2026-07-30T10:42:15.119Z",
       "status": 404

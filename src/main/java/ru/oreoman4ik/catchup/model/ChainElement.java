@@ -1,6 +1,5 @@
 package ru.oreoman4ik.catchup.model;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -11,18 +10,10 @@ import java.time.Instant;
 import java.util.Objects;
 
 /**
- * Неизменяемый публичный элемент цепочки распространения ошибки.
+ * Неизменяемый элемент цепочки распространения ошибки.
  *
- * <p>{@code exceptionType} в JSON содержит стабильный публичный
- * код причины, а не имя Java-класса исключения.</p>
- *
- * <p>{@code message} должен поступать из контролируемого каталога
- * публичных сообщений. Нельзя передавать в него результат
- * {@link Throwable#getMessage()}.</p>
- *
- * <p>{@code status} содержит числовой HTTP-статус ошибки от 400
- * до 599. Значение {@code null} допустимо, если на этом шаге
- * цепочки статус ещё не был определён.</p>
+ * <p>{@code errorCode} содержит стабильный публичный код,
+ * а не имя Java-класса исключения.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -31,10 +22,10 @@ public final class ChainElement {
     private final String service;
     private final String component;
     private final String operation;
-    private final String causeCode;
-    private final String publicMessage;
+    private final String errorCode;
+    private final String message;
     private final Instant timestamp;
-    private final Integer httpStatus;
+    private final Integer status;
 
     @JsonCreator
     private ChainElement(
@@ -47,16 +38,11 @@ public final class ChainElement {
             @JsonProperty(value = "operation", required = true)
             String operation,
 
-            @JsonProperty(
-                    value = "exceptionType",
-                    required = true
-            )
-            @JsonAlias({"exception_type", "causeCode"})
-            String causeCode,
+            @JsonProperty(value = "errorCode", required = true)
+            String errorCode,
 
             @JsonProperty(value = "message", required = true)
-            @JsonAlias("publicMessage")
-            String publicMessage,
+            String message,
 
             @JsonProperty(value = "timestamp", required = true)
             @JsonFormat(
@@ -69,8 +55,7 @@ public final class ChainElement {
             Instant timestamp,
 
             @JsonProperty("status")
-            @JsonAlias("httpStatus")
-            Integer httpStatus
+            Integer status
     ) {
         this.service = ErrorModelValidation.requiredText(
                 "service",
@@ -90,14 +75,14 @@ public final class ChainElement {
                 160
         );
 
-        this.causeCode = ErrorModelValidation.publicCode(
-                "exceptionType",
-                causeCode
+        this.errorCode = ErrorModelValidation.publicCode(
+                "errorCode",
+                errorCode
         );
 
-        this.publicMessage = ErrorModelValidation.publicMessage(
+        this.message = ErrorModelValidation.publicMessage(
                 "message",
-                publicMessage
+                message
         );
 
         this.timestamp = ErrorModelValidation.required(
@@ -105,10 +90,10 @@ public final class ChainElement {
                 timestamp
         );
 
-        this.httpStatus =
+        this.status =
                 ErrorModelValidation.nullableHttpStatus(
                         "status",
-                        httpStatus
+                        status
                 );
     }
 
@@ -117,10 +102,10 @@ public final class ChainElement {
                 builder.service,
                 builder.component,
                 builder.operation,
-                builder.causeCode,
-                builder.publicMessage,
+                builder.errorCode,
+                builder.message,
                 builder.timestamp,
-                builder.httpStatus
+                builder.status
         );
     }
 
@@ -143,21 +128,14 @@ public final class ChainElement {
         return operation;
     }
 
-    /**
-     * @return стабильный публичный код вида
-     * {@code COMPONENT_NOT_FOUND}
-     */
-    @JsonProperty("exceptionType")
-    public String getCauseCode() {
-        return causeCode;
+    @JsonProperty("errorCode")
+    public String getErrorCode() {
+        return errorCode;
     }
 
-    /**
-     * @return контролируемое сообщение для внешнего клиента
-     */
     @JsonProperty("message")
-    public String getPublicMessage() {
-        return publicMessage;
+    public String getMessage() {
+        return message;
     }
 
     @JsonProperty("timestamp")
@@ -170,13 +148,9 @@ public final class ChainElement {
         return timestamp;
     }
 
-    /**
-     * @return числовой HTTP-статус ошибки или {@code null}, если
-     * статус на этом шаге не определён
-     */
     @JsonProperty("status")
-    public Integer getHttpStatus() {
-        return httpStatus;
+    public Integer getStatus() {
+        return status;
     }
 
     @Override
@@ -192,13 +166,10 @@ public final class ChainElement {
         return service.equals(that.service)
                 && component.equals(that.component)
                 && operation.equals(that.operation)
-                && causeCode.equals(that.causeCode)
-                && publicMessage.equals(that.publicMessage)
+                && errorCode.equals(that.errorCode)
+                && message.equals(that.message)
                 && timestamp.equals(that.timestamp)
-                && Objects.equals(
-                httpStatus,
-                that.httpStatus
-        );
+                && Objects.equals(status, that.status);
     }
 
     @Override
@@ -207,10 +178,10 @@ public final class ChainElement {
                 service,
                 component,
                 operation,
-                causeCode,
-                publicMessage,
+                errorCode,
+                message,
                 timestamp,
-                httpStatus
+                status
         );
     }
 
@@ -220,10 +191,10 @@ public final class ChainElement {
                 + "service='" + service + '\''
                 + ", component='" + component + '\''
                 + ", operation='" + operation + '\''
-                + ", causeCode='" + causeCode + '\''
-                + ", publicMessage='" + publicMessage + '\''
+                + ", errorCode='" + errorCode + '\''
+                + ", message='" + message + '\''
                 + ", timestamp=" + timestamp
-                + ", httpStatus=" + httpStatus
+                + ", status=" + status
                 + '}';
     }
 
@@ -232,10 +203,10 @@ public final class ChainElement {
         private String service;
         private String component;
         private String operation;
-        private String causeCode;
-        private String publicMessage;
+        private String errorCode;
+        private String message;
         private Instant timestamp;
-        private Integer httpStatus;
+        private Integer status;
 
         private Builder() {
         }
@@ -255,13 +226,13 @@ public final class ChainElement {
             return this;
         }
 
-        public Builder causeCode(String causeCode) {
-            this.causeCode = causeCode;
+        public Builder errorCode(String errorCode) {
+            this.errorCode = errorCode;
             return this;
         }
 
-        public Builder publicMessage(String publicMessage) {
-            this.publicMessage = publicMessage;
+        public Builder message(String message) {
+            this.message = message;
             return this;
         }
 
@@ -270,8 +241,8 @@ public final class ChainElement {
             return this;
         }
 
-        public Builder httpStatus(Integer httpStatus) {
-            this.httpStatus = httpStatus;
+        public Builder status(Integer status) {
+            this.status = status;
             return this;
         }
 

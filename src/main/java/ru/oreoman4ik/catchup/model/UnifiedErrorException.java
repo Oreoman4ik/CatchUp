@@ -1,5 +1,6 @@
 package ru.oreoman4ik.catchup.model;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -7,30 +8,35 @@ import java.util.UUID;
  * Базовое исключение библиотеки для передачи одной логической
  * структурированной ошибки между уровнями приложения.
  *
- * <p>Идентификатор ошибки и исходная причина создаются один раз
- * и не меняются при добавлении нового контекста.</p>
+ * <p>Идентификатор, время возникновения, код ошибки, details и
+ * исходная причина не меняются при добавлении контекста.</p>
  */
 public final class UnifiedErrorException
         extends RuntimeException {
 
     private final UUID errorId;
-    private final int httpStatus;
-    private final String publicMessage;
+    private final Instant timestamp;
+    private final int status;
+    private final String errorCode;
+    private final ErrorDetails details;
     private final Throwable originalCause;
 
     private volatile ExceptionChain chain;
 
     private UnifiedErrorException(
             UUID errorId,
-            int httpStatus,
-            String publicMessage,
+            Instant timestamp,
+            int status,
+            String errorCode,
+            String message,
+            ErrorDetails details,
             Throwable originalCause,
             ExceptionChain chain
     ) {
         super(
                 ErrorModelValidation.publicMessage(
-                        "publicMessage",
-                        publicMessage
+                        "message",
+                        message
                 ),
                 ErrorModelValidation.required(
                         "originalCause",
@@ -43,13 +49,22 @@ public final class UnifiedErrorException
                 errorId
         );
 
-        this.httpStatus =
-                ErrorModelValidation.httpStatus(
-                        "httpStatus",
-                        httpStatus
-                );
+        this.timestamp = ErrorModelValidation.required(
+                "timestamp",
+                timestamp
+        );
 
-        this.publicMessage = getMessage();
+        this.status = ErrorModelValidation.httpStatus(
+                "status",
+                status
+        );
+
+        this.errorCode = ErrorModelValidation.publicCode(
+                "errorCode",
+                errorCode
+        );
+
+        this.details = details;
         this.originalCause = originalCause;
 
         this.chain = ErrorModelValidation.required(
@@ -59,19 +74,42 @@ public final class UnifiedErrorException
     }
 
     /**
-     * Создаёт структурированную ошибку из обычного исключения.
+     * Создаёт исключение из обычной причины.
      *
-     * <p>Цепочка изначально пуста и может быть дополнена через
-     * {@link #addContext(ChainElement)}.</p>
-     *
-     * <p>Если переданный объект уже является
-     * {@code UnifiedErrorException}, возвращается тот же экземпляр.
-     * Новый идентификатор ошибки не создаётся.</p>
+     * <p>Время фиксируется в момент вызова метода.</p>
      */
     public static UnifiedErrorException from(
             Throwable cause,
-            int httpStatus,
-            String publicMessage,
+            int status,
+            String errorCode,
+            String message,
+            int maxChainSize
+    ) {
+        return from(
+                cause,
+                Instant.now(),
+                status,
+                errorCode,
+                message,
+                null,
+                maxChainSize
+        );
+    }
+
+    /**
+     * Создаёт исключение с полным набором структурированных
+     * данных.
+     *
+     * <p>Перегрузка с явным timestamp нужна, когда точное время
+     * возникновения ошибки уже известно.</p>
+     */
+    public static UnifiedErrorException from(
+            Throwable cause,
+            Instant timestamp,
+            int status,
+            String errorCode,
+            String message,
+            ErrorDetails details,
             int maxChainSize
     ) {
         ErrorModelValidation.required(
@@ -87,28 +125,56 @@ public final class UnifiedErrorException
 
         return new UnifiedErrorException(
                 UUID.randomUUID(),
-                httpStatus,
-                publicMessage,
+                timestamp,
+                status,
+                errorCode,
+                message,
+                details,
                 cause,
                 ExceptionChain.empty(maxChainSize)
         );
     }
 
     /**
-     * Создаёт ошибку из обычного исключения и сразу добавляет
-     * первый контекст.
+     * Создаёт исключение и сразу добавляет первый контекст.
      */
     public static UnifiedErrorException from(
             Throwable cause,
-            int httpStatus,
-            String publicMessage,
+            int status,
+            String errorCode,
+            String message,
             ChainElement initialContext,
             int maxChainSize
     ) {
         return from(
                 cause,
-                httpStatus,
-                publicMessage,
+                status,
+                errorCode,
+                message,
+                maxChainSize
+        ).addContext(initialContext);
+    }
+
+    /**
+     * Создаёт исключение с полными данными и первым контекстом.
+     */
+    public static UnifiedErrorException from(
+            Throwable cause,
+            Instant timestamp,
+            int status,
+            String errorCode,
+            String message,
+            ErrorDetails details,
+            ChainElement initialContext,
+            int maxChainSize
+    ) {
+        return from(
+                cause,
+                timestamp,
+                status,
+                errorCode,
+                message,
+                details,
                 maxChainSize
         ).addContext(initialContext);
     }
@@ -116,21 +182,8 @@ public final class UnifiedErrorException
     /**
      * Восстанавливает ошибку из ответа другого сервиса.
      *
-     * <p>Сохраняются:</p>
-     *
-     * <ul>
-     *     <li>исходный errorId;</li>
-     *     <li>HTTP-статус;</li>
-     *     <li>публичное сообщение;</li>
-     *     <li>вся существующая цепочка.</li>
-     * </ul>
-     *
-     * <p>В качестве originalCause передаётся локальное исключение,
-     * возникшее при обработке удалённого HTTP-ответа.</p>
-     *
-     * <p>Если удалённая цепочка уже длиннее локального лимита,
-     * существующие элементы не удаляются, но дальнейшее увеличение
-     * блокируется.</p>
+     * <p>Сохраняются errorId, timestamp, status, message,
+     * errorCode, details и существующая цепочка.</p>
      */
     public static UnifiedErrorException fromResponse(
             ErrorResponse response,
@@ -147,9 +200,14 @@ public final class UnifiedErrorException
                 cause
         );
 
-        // Отдельно проверяем корректность локальной настройки.
+        // Проверяет корректность локального лимита.
         ExceptionChain.empty(maxChainSize);
 
+        /*
+         * Если удалённая цепочка уже превышает локальный лимит,
+         * существующие элементы не удаляются. Дальнейшее
+         * увеличение будет заблокировано.
+         */
         int effectiveMaxSize = Math.max(
                 maxChainSize,
                 response.getChain().size()
@@ -163,18 +221,18 @@ public final class UnifiedErrorException
 
         return new UnifiedErrorException(
                 response.getErrorId(),
-                response.getHttpStatus(),
-                response.getPublicMessage(),
+                response.getTimestamp(),
+                response.getStatus(),
+                response.getErrorCode(),
+                response.getMessage(),
+                response.getDetails(),
                 cause,
                 restoredChain
         );
     }
 
     /**
-     * Добавляет новый контекст к этой же логической ошибке.
-     *
-     * <p>Метод возвращает текущий экземпляр. errorId и
-     * originalCause остаются неизменными.</p>
+     * Добавляет контекст к тому же экземпляру исключения.
      */
     public synchronized UnifiedErrorException addContext(
             ChainElement context
@@ -183,21 +241,54 @@ public final class UnifiedErrorException
         return this;
     }
 
+    /**
+     * Преобразует исключение обратно в публичный ответ.
+     *
+     * <p>Перед преобразованием должен быть добавлен хотя бы один
+     * элемент цепочки.</p>
+     */
+    public ErrorResponse toResponse(String currentService) {
+        if (chain.isEmpty()) {
+            throw new IllegalStateException(
+                    "chain must contain at least one element "
+                            + "before creating ErrorResponse"
+            );
+        }
+
+        return ErrorResponse.builder()
+                .errorId(errorId)
+                .timestamp(timestamp)
+                .status(status)
+                .message(getMessage())
+                .errorCode(errorCode)
+                .currentService(currentService)
+                .chain(chain.getElements())
+                .details(details)
+                .build();
+    }
+
     public UUID getErrorId() {
         return errorId;
     }
 
-    public int getHttpStatus() {
-        return httpStatus;
+    public Instant getTimestamp() {
+        return timestamp;
     }
 
-    public String getPublicMessage() {
-        return publicMessage;
+    public int getStatus() {
+        return status;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public ErrorDetails getDetails() {
+        return details;
     }
 
     /**
-     * Возвращает самое первое исключение, из которого была создана
-     * структурированная ошибка.
+     * Возвращает исходную техническую причину ошибки.
      */
     public Throwable getOriginalCause() {
         return originalCause;

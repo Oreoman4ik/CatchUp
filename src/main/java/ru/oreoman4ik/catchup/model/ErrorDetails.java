@@ -1,6 +1,5 @@
 package ru.oreoman4ik.catchup.model;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -11,10 +10,6 @@ import java.util.Objects;
 
 /**
  * Типизированные дополнительные данные публичной ошибки.
- *
- * <p>Объект допускается только при наличии хотя бы одного
- * значения. Произвольные объекты, внутренние DTO и технические
- * детали в эту модель добавить нельзя.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
@@ -32,11 +27,9 @@ public final class ErrorDetails {
             String resource,
 
             @JsonProperty("violations")
-            @JsonAlias("fieldErrors")
             List<FieldViolation> violations,
 
             @JsonProperty("retryAfterSeconds")
-            @JsonAlias("retry_after_seconds")
             Long retryAfterSeconds
     ) {
         this.resource =
@@ -85,19 +78,11 @@ public final class ErrorDetails {
         return resource;
     }
 
-    /**
-     * @return неизменяемый список публичных ошибок валидации;
-     * пустой список означает отсутствие нарушений
-     */
     @JsonProperty("violations")
     public List<FieldViolation> getViolations() {
         return violations;
     }
 
-    /**
-     * @return неотрицательное число секунд до повторной попытки
-     * или {@code null}, если повтор не регулируется ответом
-     */
     @JsonProperty("retryAfterSeconds")
     public Long getRetryAfterSeconds() {
         return retryAfterSeconds;
@@ -172,20 +157,13 @@ public final class ErrorDetails {
         }
     }
 
-    /**
-     * Публичное описание ошибки конкретного поля.
-     *
-     * <p>Отклонённое значение намеренно отсутствует, поскольку
-     * оно может содержать персональные или чувствительные
-     * данные.</p>
-     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class FieldViolation {
 
         private final String field;
         private final String reasonCode;
-        private final String publicMessage;
+        private final String message;
 
         @JsonCreator
         private FieldViolation(
@@ -196,15 +174,13 @@ public final class ErrorDetails {
                         value = "reasonCode",
                         required = true
                 )
-                @JsonAlias("code")
                 String reasonCode,
 
                 @JsonProperty(
                         value = "message",
                         required = true
                 )
-                @JsonAlias("publicMessage")
-                String publicMessage
+                String message
         ) {
             this.field = ErrorModelValidation.requiredText(
                     "field",
@@ -217,26 +193,21 @@ public final class ErrorDetails {
                     reasonCode
             );
 
-            this.publicMessage =
-                    ErrorModelValidation.publicMessage(
-                            "message",
-                            publicMessage
-                    );
+            this.message = ErrorModelValidation.publicMessage(
+                    "message",
+                    message
+            );
         }
 
-        /**
-         * Публичная фабрика для создания нарушения из обычного
-         * прикладного Java-кода.
-         */
         public static FieldViolation of(
                 String field,
                 String reasonCode,
-                String publicMessage
+                String message
         ) {
             return new FieldViolation(
                     field,
                     reasonCode,
-                    publicMessage
+                    message
             );
         }
 
@@ -251,8 +222,8 @@ public final class ErrorDetails {
         }
 
         @JsonProperty("message")
-        public String getPublicMessage() {
-            return publicMessage;
+        public String getMessage() {
+            return message;
         }
 
         @Override
@@ -267,9 +238,7 @@ public final class ErrorDetails {
 
             return field.equals(that.field)
                     && reasonCode.equals(that.reasonCode)
-                    && publicMessage.equals(
-                    that.publicMessage
-            );
+                    && message.equals(that.message);
         }
 
         @Override
@@ -277,7 +246,7 @@ public final class ErrorDetails {
             return Objects.hash(
                     field,
                     reasonCode,
-                    publicMessage
+                    message
             );
         }
 
@@ -286,8 +255,7 @@ public final class ErrorDetails {
             return "FieldViolation{"
                     + "field='" + field + '\''
                     + ", reasonCode='" + reasonCode + '\''
-                    + ", publicMessage='"
-                    + publicMessage + '\''
+                    + ", message='" + message + '\''
                     + '}';
         }
     }
