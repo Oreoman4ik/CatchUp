@@ -1,6 +1,6 @@
-# Unified Error Model
+# Unified Error Library
 
-Библиотека предоставляет модели для унифицированного представления ошибок, хранения цепочки прохождения ошибки и передачи структурированной ошибки между уровнями приложения.
+Библиотека предоставляет единый формат ошибок для Spring MVC-приложений, поддерживает накопление цепочки прохождения ошибки и преобразует исключения REST-приложения в структурированный HTTP-ответ.
 
 Текущая версия содержит:
 
@@ -8,11 +8,11 @@
 * `ChainElement` — один элемент цепочки ошибки;
 * `ExceptionChain` — компонент управления цепочкой;
 * `UnifiedErrorException` — базовое структурированное исключение;
+* `BusinessException` — контролируемая бизнес-ошибка;
 * `ErrorDetails` — типизированные дополнительные сведения;
-* `ErrorDetails.FieldViolation` — описание ошибки отдельного поля;
+* `ErrorDetails.FieldViolation` — ошибка отдельного поля;
+* `UnifiedGlobalExceptionHandler` — глобальный обработчик Spring MVC;
 * `ErrorModelValidation` — внутренняя валидация моделей.
-
-Текущий проект является библиотекой моделей и исключений. Он пока не содержит Spring Boot starter, глобальный `ControllerAdvice`, AOP и автоматическую обработку HTTP-клиентов.
 
 ## Требования
 
@@ -22,7 +22,7 @@
 Java 21
 ```
 
-Приложения, которые подключают библиотеку, также должны использовать Java 21 или более новую версию.
+Приложения, подключающие библиотеку, также должны использовать Java 21 или более новую версию.
 
 ## Maven-координаты
 
@@ -38,16 +38,32 @@ Java 21
 
 `spring-boot-maven-plugin` не используется, потому что библиотека не является исполняемым Spring Boot-приложением.
 
-Основная compile-зависимость — Jackson:
+Основные зависимости:
 
 ```xml
 <dependency>
     <groupId>tools.jackson.core</groupId>
     <artifactId>jackson-databind</artifactId>
 </dependency>
+
+<dependency>
+    <groupId>org.springframework</groupId>
+    <artifactId>spring-webmvc</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>jakarta.validation</groupId>
+    <artifactId>jakarta.validation-api</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>jakarta.servlet</groupId>
+    <artifactId>jakarta.servlet-api</artifactId>
+    <scope>provided</scope>
+</dependency>
 ```
 
-Полный Spring MVC starter, встроенный сервер и MVC test starter для текущих моделей не требуются.
+Полный Spring Boot Web starter и встроенный сервер библиотека транзитивно не подключает.
 
 ---
 
@@ -55,7 +71,7 @@ Java 21
 
 Java- и JSON-названия полей совпадают.
 
-Для корневого ответа используются:
+Корневой ответ содержит:
 
 ```text
 errorId
@@ -68,7 +84,7 @@ chain
 details
 ```
 
-Для элемента цепочки используются:
+Элемент цепочки содержит:
 
 ```text
 service
@@ -80,9 +96,9 @@ timestamp
 status
 ```
 
-Названия `errorType`, `exceptionType`, `causeCode`, `httpStatus` и `publicMessage` в публичном контракте не используются.
+Названия `errorType`, `exceptionType`, `causeCode`, `httpStatus` и `publicMessage` не используются.
 
-JSON-алиасы отсутствуют. Каждое поле имеет одно каноническое имя.
+JSON-алиасы отсутствуют. У каждого значения есть одно каноническое имя.
 
 ## Пример ответа
 
@@ -129,7 +145,7 @@ JSON-алиасы отсутствуют. Каждое поле имеет од�
 }
 ```
 
-Полный пример JSON рекомендуется хранить по пути:
+Пример JSON хранится по пути:
 
 ```text
 src/main/resources/json/error-response-example.json
@@ -141,22 +157,18 @@ src/main/resources/json/error-response-example.json
 
 `ErrorResponse` — неизменяемая модель публичного ответа об ошибке.
 
-Класс содержит полное представление ошибки, которое может быть передано внешнему клиенту или восстановлено из ответа другого сервиса.
-
 ## Поля
 
-| Поле             | Java-тип             | Обязательность | Назначение                             |
-| ---------------- | -------------------- | -------------- | -------------------------------------- |
-| `errorId`        | `UUID`               | обязательно    | Идентификатор одной логической ошибки  |
-| `timestamp`      | `Instant`            | обязательно    | Время возникновения исходной ошибки    |
-| `status`         | `int`                | обязательно    | HTTP-статус ошибки от 400 до 599       |
-| `message`        | `String`             | обязательно    | Безопасное публичное сообщение         |
-| `errorCode`      | `String`             | обязательно    | Стабильный публичный код ошибки        |
-| `currentService` | `String`             | обязательно    | Сервис, сформировавший текущий ответ   |
-| `chain`          | `List<ChainElement>` | обязательно    | Непустая цепочка прохождения ошибки    |
-| `details`        | `ErrorDetails`       | необязательно  | Типизированные дополнительные сведения |
-
-## Обязательные поля
+| Поле             | Java-тип             | Обязательность | Назначение                            |
+| ---------------- | -------------------- | -------------- | ------------------------------------- |
+| `errorId`        | `UUID`               | обязательно    | Идентификатор одной логической ошибки |
+| `timestamp`      | `Instant`            | обязательно    | Время возникновения исходной ошибки   |
+| `status`         | `int`                | обязательно    | HTTP-статус ошибки от 400 до 599      |
+| `message`        | `String`             | обязательно    | Безопасное публичное сообщение        |
+| `errorCode`      | `String`             | обязательно    | Стабильный публичный код              |
+| `currentService` | `String`             | обязательно    | Сервис, сформировавший ответ          |
+| `chain`          | `List<ChainElement>` | обязательно    | Непустая цепочка ошибки               |
+| `details`        | `ErrorDetails`       | необязательно  | Дополнительные публичные сведения     |
 
 Нельзя создать `ErrorResponse` без:
 
@@ -170,9 +182,7 @@ src/main/resources/json/error-response-example.json
 
 `details` может быть равен `null`, если дополнительных безопасных сведений нет.
 
-При `details == null` поле не включается в JSON.
-
-## Создание ответа
+## Создание
 
 ```java
 ErrorResponse response = ErrorResponse.builder()
@@ -189,67 +199,40 @@ ErrorResponse response = ErrorResponse.builder()
 
 ## Методы
 
-### `builder()`
-
-Создаёт новый builder.
-
-### `getErrorId()`
-
-Возвращает идентификатор логической ошибки.
-
-### `getTimestamp()`
-
-Возвращает время возникновения исходной ошибки.
-
-### `getStatus()`
-
-Возвращает итоговый HTTP-статус.
-
-### `getMessage()`
-
-Возвращает безопасное публичное сообщение.
-
-### `getErrorCode()`
-
-Возвращает стабильный публичный код ошибки.
-
-### `getCurrentService()`
-
-Возвращает название сервиса, сформировавшего ответ.
-
-### `getChain()`
-
-Возвращает неизменяемую непустую цепочку.
-
-### `getDetails()`
-
-Возвращает дополнительные сведения или `null`.
+```java
+response.getErrorId();
+response.getTimestamp();
+response.getStatus();
+response.getMessage();
+response.getErrorCode();
+response.getCurrentService();
+response.getChain();
+response.getDetails();
+```
 
 ---
 
 # ChainElement
 
-`ChainElement` описывает один уровень прохождения ошибки.
-
-Один элемент содержит контекст конкретного сервиса, компонента и операции.
+`ChainElement` описывает один уровень прохождения ошибки через сервис, компонент или операцию.
 
 ## Поля
 
-| Поле        | Java-тип  | Обязательность | Назначение                          |
-| ----------- | --------- | -------------- | ----------------------------------- |
-| `service`   | `String`  | обязательно    | Название сервиса                    |
-| `component` | `String`  | обязательно    | Название компонента или класса      |
-| `operation` | `String`  | обязательно    | Название операции                   |
-| `errorCode` | `String`  | обязательно    | Публичный код ошибки на этом уровне |
-| `message`   | `String`  | обязательно    | Безопасное публичное сообщение      |
-| `timestamp` | `Instant` | обязательно    | Время добавления элемента           |
-| `status`    | `Integer` | необязательно  | HTTP-статус, если он известен       |
+| Поле        | Java-тип  | Обязательность | Назначение                     |
+| ----------- | --------- | -------------- | ------------------------------ |
+| `service`   | `String`  | обязательно    | Название сервиса               |
+| `component` | `String`  | обязательно    | Название компонента или класса |
+| `operation` | `String`  | обязательно    | Название операции              |
+| `errorCode` | `String`  | обязательно    | Публичный код ошибки           |
+| `message`   | `String`  | обязательно    | Безопасное публичное сообщение |
+| `timestamp` | `Instant` | обязательно    | Время добавления элемента      |
+| `status`    | `Integer` | необязательно  | HTTP-статус, если он известен  |
 
-`status == null` допустим, если на конкретном уровне обработки HTTP-статус ещё не был определён.
+`status == null` допустим, если на конкретном уровне HTTP-статус ещё не был определён.
 
-Если статус задан, он должен находиться в диапазоне от 400 до 599.
+Если статус указан, он должен находиться в диапазоне от 400 до 599.
 
-## Создание элемента
+## Создание
 
 ```java
 ChainElement element = ChainElement.builder()
@@ -265,39 +248,21 @@ ChainElement element = ChainElement.builder()
 
 ## Методы
 
-### `getService()`
-
-Возвращает название сервиса.
-
-### `getComponent()`
-
-Возвращает название компонента или класса.
-
-### `getOperation()`
-
-Возвращает название операции.
-
-### `getErrorCode()`
-
-Возвращает публичный код ошибки.
-
-### `getMessage()`
-
-Возвращает безопасное публичное сообщение.
-
-### `getTimestamp()`
-
-Возвращает время добавления контекста.
-
-### `getStatus()`
-
-Возвращает HTTP-статус или `null`.
+```java
+element.getService();
+element.getComponent();
+element.getOperation();
+element.getErrorCode();
+element.getMessage();
+element.getTimestamp();
+element.getStatus();
+```
 
 ---
 
 # Формат timestamp
 
-Все timestamp сериализуются в UTC в точном формате:
+Все timestamp сериализуются в UTC в формате:
 
 ```text
 yyyy-MM-dd'T'HH:mm:ss.SSS'Z'
@@ -309,23 +274,19 @@ yyyy-MM-dd'T'HH:mm:ss.SSS'Z'
 2026-07-30T10:42:15.018Z
 ```
 
-Формат закреплён в модели через `@JsonFormat`.
-
-Он не должен зависеть от глобальной настройки `JsonMapper`, которая может включать числовое представление времени.
+Формат закреплён через `@JsonFormat` непосредственно в моделях и не должен зависеть от глобальных настроек `JsonMapper`.
 
 ## Верхнеуровневый timestamp
 
 `ErrorResponse.timestamp` и `UnifiedErrorException.timestamp` означают время возникновения исходной ошибки.
 
-Это значение создаётся один раз и не изменяется при прохождении ошибки через следующие уровни или сервисы.
-
-При восстановлении ошибки из ответа удалённого сервиса исходный timestamp сохраняется.
+Timestamp создаётся один раз и сохраняется при передаче ошибки между уровнями приложения и микросервисами.
 
 ## Timestamp элемента цепочки
 
 `ChainElement.timestamp` означает время добавления конкретного контекста.
 
-Поэтому разные элементы одной цепочки могут иметь разные timestamp.
+Поэтому элементы одной цепочки могут иметь разные timestamp.
 
 ---
 
@@ -367,17 +328,18 @@ yyyy-MM-dd'T'HH:mm:ss.SSS'Z'
 
 ---
 
-# Публичные коды ошибок
+# Публичные коды
 
 Публичные коды используются в:
 
 * `ErrorResponse.errorCode`;
 * `ChainElement.errorCode`;
+* `UnifiedErrorException.errorCode`;
+* `BusinessException.errorCode`;
 * `ErrorDetails.resource`;
-* `FieldViolation.reasonCode`;
-* `UnifiedErrorException.errorCode`.
+* `FieldViolation.reasonCode`.
 
-Формат кода:
+Формат:
 
 ```text
 [A-Z][A-Z0-9_]{1,63}
@@ -409,29 +371,24 @@ org.springframework.dao.DataIntegrityViolationException
 
 Значения, заканчивающиеся на `EXCEPTION`, отклоняются.
 
-Код не должен создаваться из имени Java-класса:
+Нельзя формировать публичный код из имени Java-исключения:
 
 ```java
-exception.getClass().getName()
+exception.getClass().getName();
+exception.getClass().getSimpleName();
 ```
 
-или:
-
-```java
-exception.getClass().getSimpleName()
-```
-
-Правильно использовать заранее определённый код:
+Нужно использовать заранее определённый публичный код:
 
 ```java
 "COMPONENT_NOT_FOUND"
 ```
 
-Для большого проекта рекомендуется хранить коды в enum или наборе констант.
+Для большого приложения рекомендуется хранить коды в enum или наборе констант.
 
 ---
 
-# Безопасность публичного сообщения
+# Безопасность публичных сообщений
 
 Поле `message` предназначено для внешнего клиента.
 
@@ -440,11 +397,11 @@ exception.getClass().getSimpleName()
 * значение не равно `null`;
 * строка не пустая;
 * длина не превышает 500 символов;
-* строка не содержит `\r`, `\n` и `\t`.
+* отсутствуют `\r`, `\n` и `\t`.
 
-Модель не выполняет автоматический поиск SQL, токенов, URL и stack trace по blacklist-регулярным выражениям.
+Модель не выполняет автоматический поиск SQL, токенов, URL или stack trace с помощью blacklist-регулярных выражений.
 
-Безопасность обеспечивается тем, что публичный текст должен поступать из контролируемого каталога сообщений.
+Безопасность обеспечивается тем, что сообщения должны поступать из контролируемого каталога приложения.
 
 Нельзя:
 
@@ -458,20 +415,15 @@ exception.getClass().getSimpleName()
 .message("Компонент не найден")
 ```
 
-Техническое сообщение исключения, его причины и stack trace должны передаваться в систему логирования, а не в публичный ответ.
+Техническое сообщение, причины и stack trace должны записываться в серверный лог.
 
-`UnifiedErrorException.getMessage()` возвращает именно публичное сообщение.
+`UnifiedErrorException.getMessage()` возвращает публичное сообщение.
 
-Исходное техническое исключение доступно отдельно:
-
-```java
-exception.getOriginalCause()
-```
-
-и через стандартный метод:
+Исходная техническая причина доступна через:
 
 ```java
-exception.getCause()
+exception.getOriginalCause();
+exception.getCause();
 ```
 
 ---
@@ -480,7 +432,7 @@ exception.getCause()
 
 `ErrorDetails` содержит только заранее определённые дополнительные сведения.
 
-Он заменяет небезопасный:
+Он заменяет небезопасный тип:
 
 ```java
 Map<String, Object>
@@ -488,15 +440,19 @@ Map<String, Object>
 
 ## Поля
 
-| Поле                | Тип                    | Назначение                        |
-| ------------------- | ---------------------- | --------------------------------- |
-| `resource`          | `String`               | Публичный код ресурса             |
-| `violations`        | `List<FieldViolation>` | Список ошибок валидации           |
-| `retryAfterSeconds` | `Long`                 | Задержка перед повторной попыткой |
+| Поле                | Тип                    | Назначение              |
+| ------------------- | ---------------------- | ----------------------- |
+| `resource`          | `String`               | Публичный код ресурса   |
+| `violations`        | `List<FieldViolation>` | Ошибки валидации        |
+| `retryAfterSeconds` | `Long`                 | Задержка перед повтором |
 
-Все отдельные поля необязательны, но полностью пустой `ErrorDetails` создать нельзя.
+Все поля по отдельности необязательны, но полностью пустой `ErrorDetails` создать нельзя.
 
-Если дополнительных сведений нет, в `ErrorResponse` и `UnifiedErrorException` нужно использовать `details == null`.
+Если дополнительных сведений нет, используется:
+
+```java
+details == null
+```
 
 ## Создание
 
@@ -510,24 +466,24 @@ ErrorDetails details = ErrorDetails.builder()
 ## Ограничения
 
 * `retryAfterSeconds` не может быть отрицательным;
-* `violations` содержит не более 100 элементов;
+* список `violations` содержит не более 100 элементов;
 * список не может содержать `null`;
 * входной список копируется;
-* возвращаемый список нельзя изменить.
+* возвращаемый список является неизменяемым.
 
 ---
 
 # FieldViolation
 
-`FieldViolation` описывает ошибку конкретного поля.
+`FieldViolation` описывает публичную ошибку конкретного поля.
 
 ## Поля
 
-| Поле         | Тип      | Назначение              |
-| ------------ | -------- | ----------------------- |
-| `field`      | `String` | Публичное название поля |
-| `reasonCode` | `String` | Публичный код причины   |
-| `message`    | `String` | Безопасное сообщение    |
+| Поле         | Тип      | Назначение            |
+| ------------ | -------- | --------------------- |
+| `field`      | `String` | Публичное имя поля    |
+| `reasonCode` | `String` | Публичный код причины |
+| `message`    | `String` | Безопасное сообщение  |
 
 ## Создание
 
@@ -542,15 +498,15 @@ ErrorDetails.FieldViolation violation =
 
 Отклонённое значение поля намеренно не хранится.
 
-Например, модель не содержит `rejectedValue`, потому что значение может быть паролем, токеном или персональной информацией.
+Поле вроде `rejectedValue` может содержать пароль, токен, персональные или другие чувствительные данные.
 
 ---
 
 # ExceptionChain
 
-`ExceptionChain` управляет историей прохождения одной ошибки через сервисы, компоненты и операции.
+`ExceptionChain` хранит историю прохождения одной ошибки.
 
-Объект цепочки является неизменяемым: метод `add()` возвращает новую цепочку либо тот же экземпляр, если изменение не требуется.
+Объект является неизменяемым: `add()` возвращает новую цепочку либо тот же экземпляр, если добавление не требуется.
 
 ## Создание пустой цепочки
 
@@ -558,9 +514,7 @@ ErrorDetails.FieldViolation violation =
 ExceptionChain chain = ExceptionChain.empty(10);
 ```
 
-Число `10` — максимальный размер цепочки.
-
-Допустимый диапазон максимального размера:
+Допустимый диапазон `maxSize`:
 
 ```text
 1–100
@@ -577,7 +531,7 @@ ExceptionChain chain = ExceptionChain.of(
 
 Переданный список копируется.
 
-Изменение `existingElements` после создания цепочки не влияет на `ExceptionChain`.
+Изменение исходного списка после создания объекта не влияет на цепочку.
 
 ## Добавление элемента
 
@@ -585,9 +539,9 @@ ExceptionChain chain = ExceptionChain.of(
 chain = chain.add(element);
 ```
 
-Новый элемент добавляется в конец.
+Элемент добавляется в конец цепочки.
 
-Порядок элементов:
+Порядок:
 
 1. место возникновения ошибки;
 2. следующий слой обработки;
@@ -606,88 +560,61 @@ service + component + operation
 
 Различия в `errorCode`, `message`, `timestamp` или `status` не создают новую запись, если сервис, компонент и операция совпадают.
 
-Это предотвращает появление дубликатов при повторной обработке одного уровня.
-
 ## Ограничение размера
 
 После достижения `maxSize` новые элементы не добавляются.
 
-Метод:
+Проверка:
 
 ```java
-chain.isLimitReached()
+chain.isLimitReached();
 ```
 
-возвращает `true`, если цепочка достигла максимального размера.
+Существующие элементы не удаляются и не меняют порядок.
 
-Существующие элементы при этом не удаляются и не переставляются.
+## Основные методы
 
-## Методы
+```java
+ExceptionChain.empty(maxSize);
+ExceptionChain.of(elements, maxSize);
 
-### `empty(int maxSize)`
-
-Создаёт пустую цепочку.
-
-### `of(List<ChainElement> elements, int maxSize)`
-
-Создаёт цепочку из существующих элементов.
-
-### `add(ChainElement element)`
-
-Добавляет новый уникальный уровень, если лимит ещё не достигнут.
-
-### `getElements()`
-
-Возвращает неизменяемые элементы в порядке добавления.
-
-### `size()`
-
-Возвращает текущее количество элементов.
-
-### `isEmpty()`
-
-Проверяет, пуста ли цепочка.
-
-### `getMaxSize()`
-
-Возвращает установленный лимит.
-
-### `isLimitReached()`
-
-Проверяет достижение лимита.
-
-### `containsLevel(ChainElement candidate)`
-
-Проверяет наличие уровня с тем же сервисом, компонентом и операцией.
+chain.add(element);
+chain.getElements();
+chain.size();
+chain.isEmpty();
+chain.getMaxSize();
+chain.isLimitReached();
+chain.containsLevel(element);
+```
 
 ---
 
 # UnifiedErrorException
 
-`UnifiedErrorException` — базовое исключение библиотеки для передачи одной структурированной ошибки между уровнями приложения.
+`UnifiedErrorException` передаёт одну логическую структурированную ошибку между уровнями приложения.
 
-Оно хранит:
+Исключение хранит:
 
-| Поле            | Тип              | Назначение                          |
-| --------------- | ---------------- | ----------------------------------- |
-| `errorId`       | `UUID`           | Неизменяемый идентификатор ошибки   |
-| `timestamp`     | `Instant`        | Время возникновения исходной ошибки |
-| `status`        | `int`            | HTTP-статус ошибки                  |
-| `errorCode`     | `String`         | Публичный код ошибки                |
-| `message`       | `String`         | Публичное сообщение                 |
-| `details`       | `ErrorDetails`   | Дополнительные сведения             |
-| `originalCause` | `Throwable`      | Исходная техническая причина        |
-| `chain`         | `ExceptionChain` | Цепочка прохождения ошибки          |
+| Поле            | Тип              | Назначение                 |
+| --------------- | ---------------- | -------------------------- |
+| `errorId`       | `UUID`           | Неизменяемый идентификатор |
+| `timestamp`     | `Instant`        | Время исходной ошибки      |
+| `status`        | `int`            | HTTP-статус                |
+| `errorCode`     | `String`         | Публичный код              |
+| `message`       | `String`         | Публичное сообщение        |
+| `details`       | `ErrorDetails`   | Дополнительные сведения    |
+| `originalCause` | `Throwable`      | Исходная причина           |
+| `chain`         | `ExceptionChain` | История прохождения        |
 
-При добавлении контекста не создаётся новая независимая ошибка:
+При добавлении нового контекста:
 
-* используется тот же экземпляр `UnifiedErrorException`;
-* `errorId` остаётся прежним;
-* `timestamp` остаётся прежним;
-* `errorCode` остаётся прежним;
+* используется тот же объект `UnifiedErrorException`;
+* `errorId` остаётся неизменным;
+* timestamp не изменяется;
+* статус и код не изменяются;
 * `details` не теряется;
-* исходная причина не меняется;
-* обновляется только цепочка.
+* исходная причина сохраняется;
+* дополняется только цепочка.
 
 ## Создание локальной ошибки
 
@@ -709,7 +636,7 @@ UnifiedErrorException exception =
 * `details` равен `null`;
 * цепочка изначально пустая.
 
-## Создание с полным набором данных
+## Создание с полными данными
 
 ```java
 UnifiedErrorException exception =
@@ -723,8 +650,6 @@ UnifiedErrorException exception =
                 10
         );
 ```
-
-Этот вариант используется, когда время возникновения и дополнительные сведения уже известны.
 
 ## Создание с первым контекстом
 
@@ -732,20 +657,6 @@ UnifiedErrorException exception =
 UnifiedErrorException exception =
         UnifiedErrorException.from(
                 cause,
-                404,
-                "COMPONENT_NOT_FOUND",
-                "Компонент не найден",
-                initialContext,
-                10
-        );
-```
-
-Или с полным набором данных:
-
-```java
-UnifiedErrorException exception =
-        UnifiedErrorException.from(
-                cause,
                 timestamp,
                 404,
                 "COMPONENT_NOT_FOUND",
@@ -756,9 +667,9 @@ UnifiedErrorException exception =
         );
 ```
 
-## Повторная обработка UnifiedErrorException
+## Повторная обработка
 
-Если в `from(...)` передан объект, который уже является `UnifiedErrorException`, возвращается тот же экземпляр:
+Если в `from(...)` передан уже существующий `UnifiedErrorException`, возвращается тот же экземпляр.
 
 ```java
 UnifiedErrorException same =
@@ -771,7 +682,7 @@ UnifiedErrorException same =
         );
 ```
 
-В этом случае новый `errorId` не создаётся и существующая структурированная информация не заменяется.
+Новый `errorId` при этом не создаётся.
 
 ## Добавление контекста
 
@@ -789,11 +700,9 @@ exception.addContext(
 );
 ```
 
-`addContext()` возвращает тот же экземпляр `UnifiedErrorException`.
+`addContext()` возвращает тот же экземпляр исключения.
 
-Метод синхронизирован, но исключение предназначено прежде всего для обработки одного запроса и не должно использоваться как общий глобальный объект между независимыми потоками.
-
-## Восстановление из ответа другого сервиса
+## Восстановление из удалённого ответа
 
 ```java
 UnifiedErrorException exception =
@@ -804,116 +713,389 @@ UnifiedErrorException exception =
         );
 ```
 
-При восстановлении сохраняются:
+Сохраняются:
 
 * `errorId`;
-* исходный `timestamp`;
-* `status`;
-* `message`;
+* исходный timestamp;
+* статус;
+* публичное сообщение;
 * `errorCode`;
 * `details`;
 * существующая цепочка.
 
-В качестве `originalCause` сохраняется локальное исключение, возникшее при HTTP-вызове или разборе удалённого ответа.
-
-После восстановления можно добавить контекст вызывающего сервиса:
+После восстановления можно добавить локальный контекст:
 
 ```java
 exception.addContext(localContext);
 ```
 
-При этом удалённые элементы не теряются.
-
 ## Удалённая цепочка длиннее локального лимита
 
-Если полученная цепочка уже длиннее локального `maxChainSize`, существующие удалённые элементы сохраняются.
+Если полученная цепочка уже длиннее локального лимита, существующие элементы сохраняются.
 
 Эффективный лимит становится не меньше размера восстановленной цепочки.
 
-Цепочка считается достигшей лимита, и новые элементы больше не добавляются.
+Новые элементы после этого не добавляются.
 
-Это позволяет не терять уже полученную межсервисную историю и одновременно не увеличивать ответ бесконтрольно.
+Так библиотека не теряет полученную межсервисную историю и не увеличивает цепочку бесконтрольно.
 
 ## Преобразование в ErrorResponse
-
-Перед передачей глобальному обработчику исключение можно преобразовать в публичный ответ:
 
 ```java
 ErrorResponse response =
         exception.toResponse("service-a");
 ```
 
-В ответ переносятся без изменений:
+В ответ переносятся:
 
 * `errorId`;
-* `timestamp`;
-* `status`;
-* `message`;
+* timestamp;
+* статус;
+* сообщение;
 * `errorCode`;
 * `details`;
 * цепочка.
 
-Перед вызовом `toResponse()` цепочка должна содержать хотя бы один элемент.
+Перед преобразованием цепочка должна содержать хотя бы один элемент.
 
-Если цепочка пуста, будет выброшен `IllegalStateException`.
+## Основные методы
 
-## Методы UnifiedErrorException
+```java
+exception.getErrorId();
+exception.getTimestamp();
+exception.getStatus();
+exception.getErrorCode();
+exception.getMessage();
+exception.getDetails();
+exception.getOriginalCause();
+exception.getCause();
+exception.getChain();
+exception.getChainElements();
+exception.isChainLimitReached();
 
-### `getErrorId()`
-
-Возвращает неизменяемый идентификатор ошибки.
-
-### `getTimestamp()`
-
-Возвращает время возникновения исходной ошибки.
-
-### `getStatus()`
-
-Возвращает HTTP-статус.
-
-### `getErrorCode()`
-
-Возвращает публичный код ошибки.
-
-### `getMessage()`
-
-Возвращает публичное сообщение. Метод наследуется от `RuntimeException`.
-
-### `getDetails()`
-
-Возвращает дополнительные сведения или `null`.
-
-### `getOriginalCause()`
-
-Возвращает исходную техническую причину.
-
-### `getCause()`
-
-Стандартный метод `Throwable`, который также возвращает исходную причину.
-
-### `getChain()`
-
-Возвращает объект `ExceptionChain`.
-
-### `getChainElements()`
-
-Возвращает неизменяемый список элементов.
-
-### `isChainLimitReached()`
-
-Проверяет достижение лимита цепочки.
-
-### `addContext(ChainElement context)`
-
-Добавляет новый уникальный уровень к той же логической ошибке.
-
-### `toResponse(String currentService)`
-
-Преобразует исключение в `ErrorResponse`.
+exception.addContext(context);
+exception.toResponse(currentService);
+```
 
 ---
 
-# Полный пример локальной ошибки
+# BusinessException
+
+`BusinessException` представляет контролируемую бизнес-ошибку приложения.
+
+Она хранит:
+
+* HTTP-статус;
+* публичный код;
+* публичное сообщение;
+* необязательные `details`;
+* необязательную техническую причину.
+
+## Создание
+
+```java
+throw new BusinessException(
+        404,
+        "COMPONENT_NOT_FOUND",
+        "Компонент не найден"
+);
+```
+
+С дополнительными сведениями:
+
+```java
+throw new BusinessException(
+        409,
+        "BOOK_ALREADY_EXISTS",
+        "Книга уже существует",
+        ErrorDetails.builder()
+                .resource("BOOK")
+                .build()
+);
+```
+
+С технической причиной:
+
+```java
+throw new BusinessException(
+        500,
+        "BOOK_PROCESSING_ERROR",
+        "Не удалось обработать книгу",
+        null,
+        technicalException
+);
+```
+
+В публичное сообщение нельзя передавать `technicalException.getMessage()`.
+
+---
+
+# Глобальный обработчик
+
+Библиотека предоставляет:
+
+```java
+UnifiedGlobalExceptionHandler
+```
+
+Класс помечен:
+
+```java
+@RestControllerAdvice
+@Order(Ordered.LOWEST_PRECEDENCE)
+```
+
+Он преобразует исключения Spring MVC в единый `ErrorResponse`.
+
+## Подключение
+
+Если пакет библиотеки входит в component scan приложения, обработчик будет зарегистрирован как Spring bean.
+
+Если пакет не входит в component scan, его можно импортировать явно:
+
+```java
+@Configuration
+@Import(UnifiedGlobalExceptionHandler.class)
+public class ErrorHandlingConfiguration {
+}
+```
+
+## Настройки
+
+Название текущего сервиса берётся из:
+
+```yaml
+spring:
+  application:
+    name: catalog-service
+```
+
+Если настройка отсутствует, используется:
+
+```text
+application
+```
+
+Максимальный размер цепочки:
+
+```yaml
+catchup:
+  errors:
+    max-chain-size: 10
+```
+
+Значение по умолчанию:
+
+```text
+10
+```
+
+Допустимый диапазон:
+
+```text
+1–100
+```
+
+## Поддерживаемые исключения
+
+| Исключение или категория           |          HTTP-статус | Публичный код               |
+| ---------------------------------- | -------------------: | --------------------------- |
+| `UnifiedErrorException`            |          сохранённый | сохранённый                 |
+| `BusinessException`                | заданный приложением | заданный приложением        |
+| `MethodArgumentNotValidException`  |                  400 | `VALIDATION_ERROR`          |
+| `ConstraintViolationException`     |                  400 | `VALIDATION_ERROR`          |
+| входная method validation          |                  400 | `VALIDATION_ERROR`          |
+| ошибка валидации результата метода |                  500 | `RESPONSE_VALIDATION_ERROR` |
+| удалённый HTTP 4xx                 |         исходный 4xx | `REMOTE_CLIENT_ERROR`       |
+| удалённый HTTP 5xx                 |         исходный 5xx | `REMOTE_SERVER_ERROR`       |
+| таймаут HTTP-вызова                |                  504 | `REMOTE_TIMEOUT`            |
+| недоступный удалённый сервис       |                  503 | `REMOTE_UNAVAILABLE`        |
+| другая ошибка HTTP-клиента         |                  502 | `REMOTE_REQUEST_ERROR`      |
+| стандартная ошибка Spring 400      |                  400 | `INVALID_REQUEST`           |
+| стандартная ошибка Spring 401      |                  401 | `AUTHENTICATION_REQUIRED`   |
+| стандартная ошибка Spring 403      |                  403 | `ACCESS_DENIED`             |
+| стандартная ошибка Spring 404      |                  404 | `RESOURCE_NOT_FOUND`        |
+| стандартная ошибка Spring 405      |                  405 | `METHOD_NOT_ALLOWED`        |
+| стандартная ошибка Spring 409      |                  409 | `CONFLICT`                  |
+| стандартная ошибка Spring 415      |                  415 | `UNSUPPORTED_MEDIA_TYPE`    |
+| стандартная ошибка Spring 422      |                  422 | `UNPROCESSABLE_CONTENT`     |
+| стандартная ошибка Spring 429      |                  429 | `TOO_MANY_REQUESTS`         |
+| неизвестное исключение             |                  500 | `INTERNAL_ERROR`            |
+
+---
+
+# Обработка валидации
+
+Для ошибок входных данных создаётся:
+
+```json
+{
+  "status": 400,
+  "message": "Переданные данные некорректны",
+  "errorCode": "VALIDATION_ERROR",
+  "details": {
+    "violations": [
+      {
+        "field": "name",
+        "reasonCode": "REQUIRED",
+        "message": "Поле обязательно"
+      }
+    ]
+  }
+}
+```
+
+Поддерживаемые публичные коды нарушений:
+
+| Ограничение                       | Код              |
+| --------------------------------- | ---------------- |
+| `NotNull`, `NotBlank`, `NotEmpty` | `REQUIRED`       |
+| `Size`, `Length`                  | `INVALID_SIZE`   |
+| `Min`, `DecimalMin`, `Positive`   | `TOO_SMALL`      |
+| `Max`, `DecimalMax`, `Negative`   | `TOO_LARGE`      |
+| `Email`                           | `INVALID_EMAIL`  |
+| `Pattern`                         | `INVALID_FORMAT` |
+| другие ограничения                | `INVALID`        |
+
+Исходное сообщение Bean Validation наружу не передаётся.
+
+Отклонённое значение поля также не включается в ответ.
+
+---
+
+# Исходящие HTTP-запросы
+
+Глобальный обработчик учитывает исключения синхронных Spring HTTP-клиентов.
+
+## Удалённый HTTP 4xx
+
+Возвращается исходный статус удалённого сервиса:
+
+```json
+{
+  "status": 404,
+  "message": "Удалённый сервис отклонил запрос",
+  "errorCode": "REMOTE_CLIENT_ERROR"
+}
+```
+
+## Удалённый HTTP 5xx
+
+Возвращается исходный статус:
+
+```json
+{
+  "status": 503,
+  "message": "Удалённый сервис завершил запрос с ошибкой",
+  "errorCode": "REMOTE_SERVER_ERROR"
+}
+```
+
+## Таймаут
+
+```json
+{
+  "status": 504,
+  "message": "Истекло время ожидания ответа удалённого сервиса",
+  "errorCode": "REMOTE_TIMEOUT"
+}
+```
+
+## Недоступный сервис
+
+```json
+{
+  "status": 503,
+  "message": "Удалённый сервис недоступен",
+  "errorCode": "REMOTE_UNAVAILABLE"
+}
+```
+
+## Ошибка преобразования ответа
+
+```json
+{
+  "status": 502,
+  "message": "Не удалось обработать ответ удалённого сервиса",
+  "errorCode": "REMOTE_REQUEST_ERROR"
+}
+```
+
+Тело удалённого ответа и техническое сообщение HTTP-клиента наружу не передаются.
+
+Текущая версия глобального обработчика не восстанавливает `UnifiedErrorException` автоматически из JSON-тела удалённой ошибки. Для ручного восстановления используется:
+
+```java
+UnifiedErrorException.fromResponse(
+        remoteResponse,
+        clientException,
+        maxChainSize
+);
+```
+
+---
+
+# Безопасность глобального обработчика
+
+В публичный ответ не передаются:
+
+* `exception.getMessage()` неизвестного исключения;
+* stack trace;
+* имя Java-класса исключения;
+* тело ошибочного ответа удалённого сервиса;
+* rejected value при ошибках валидации;
+* SQL-запросы;
+* JDBC URL;
+* токены и пароли;
+* внутренние пути файлов;
+* URI запроса, который может содержать идентификаторы.
+
+Для неизвестного исключения всегда используется безопасный ответ:
+
+```json
+{
+  "status": 500,
+  "message": "Внутренняя ошибка сервиса",
+  "errorCode": "INTERNAL_ERROR"
+}
+```
+
+Полный ответ также содержит `errorId`, timestamp, текущий сервис и цепочку.
+
+---
+
+# Пользовательские обработчики
+
+Библиотека не должна блокировать пользовательские обработчики приложения.
+
+Глобальный обработчик имеет минимальный приоритет:
+
+```java
+@Order(Ordered.LOWEST_PRECEDENCE)
+```
+
+Локальный обработчик контроллера:
+
+```java
+@ExceptionHandler(CustomApplicationException.class)
+```
+
+будет применён раньше глобального обработчика.
+
+Приложение также может объявить собственный `@ControllerAdvice` с более высоким приоритетом:
+
+```java
+@RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class ApplicationExceptionHandler {
+}
+```
+
+Такой обработчик сможет переопределить библиотечное поведение.
+
+---
+
+# Пример полного сценария
 
 ```java
 Instant timestamp = Instant.now();
@@ -924,7 +1106,7 @@ ErrorDetails details = ErrorDetails.builder()
 
 ChainElement repositoryContext =
         ChainElement.builder()
-                .service("service-b")
+                .service("catalog-service")
                 .component("ComponentRepository")
                 .operation("findById")
                 .errorCode("COMPONENT_NOT_FOUND")
@@ -949,7 +1131,7 @@ UnifiedErrorException exception =
 
 exception.addContext(
         ChainElement.builder()
-                .service("service-b")
+                .service("catalog-service")
                 .component("ComponentService")
                 .operation("findComponent")
                 .errorCode("COMPONENT_NOT_FOUND")
@@ -959,51 +1141,19 @@ exception.addContext(
                 .build()
 );
 
-ErrorResponse response =
-        exception.toResponse("service-b");
-```
-
----
-
-# Пример межсервисного восстановления
-
-```java
-ErrorResponse remoteResponse =
-        jsonMapper.readValue(
-                remoteBody,
-                ErrorResponse.class
-        );
-
-UnifiedErrorException exception =
-        UnifiedErrorException.fromResponse(
-                remoteResponse,
-                httpClientException,
-                10
-        );
-
-exception.addContext(
-        ChainElement.builder()
-                .service("service-a")
-                .component("ComponentGateway")
-                .operation("loadComponent")
-                .errorCode("UPSTREAM_ERROR")
-                .message("Не удалось получить компонент")
-                .timestamp(Instant.now())
-                .status(remoteResponse.getStatus())
-                .build()
-);
-
 throw exception;
 ```
 
-После такой обработки:
+`UnifiedGlobalExceptionHandler` добавит контекст REST-контроллера и сформирует `ErrorResponse`.
 
-* `errorId` удалённого ответа сохраняется;
-* timestamp исходной ошибки сохраняется;
-* `details` сохраняется;
-* исходная цепочка сохраняется;
-* локальный контекст добавляется в конец;
-* глобальный обработчик может вызвать `toResponse()`.
+При этом сохраняются:
+
+* один `errorId`;
+* исходный timestamp;
+* код ошибки;
+* `details`;
+* исходная техническая причина;
+* все уникальные элементы цепочки.
 
 ---
 
@@ -1015,11 +1165,21 @@ throw exception;
 * содержат `private final` поля;
 * не имеют setters;
 * копируют входные коллекции;
+* не допускают `null` внутри коллекций;
 * реализуют `equals()`, `hashCode()` и `toString()`.
 
-`ExceptionChain` также является неизменяемым value-объектом.
+`ExceptionChain` является неизменяемым value-объектом.
 
-`UnifiedErrorException` сохраняет неизменяемыми все основные структурированные поля. Изменяемой является только ссылка на текущую неизменяемую `ExceptionChain`, которая заменяется при успешном добавлении контекста.
+В `UnifiedErrorException` неизменяемы:
+
+* `errorId`;
+* timestamp;
+* статус;
+* код;
+* `details`;
+* исходная причина.
+
+Изменяемой является только ссылка на текущий immutable-объект `ExceptionChain`.
 
 ---
 
@@ -1031,25 +1191,25 @@ throw exception;
 @JsonIgnoreProperties(ignoreUnknown = true)
 ```
 
-Это позволяет новой версии читать дополнительные неизвестные поля.
+Это позволяет читать JSON с дополнительными неизвестными полями.
 
 Правила развития контракта:
 
 1. Новые поля добавляются только как необязательные.
 2. Тип существующего поля не изменяется.
-3. Значение и назначение существующего поля не изменяются.
-4. Новая версия должна принимать отсутствие нового необязательного поля.
-5. Старый клиент должен игнорировать неизвестные поля.
-6. Для одного значения используется одно каноническое JSON-имя.
-7. `@JsonAlias` в первой версии контракта не используется.
+3. Назначение существующего поля не изменяется.
+4. Новая версия должна принимать отсутствие нового поля.
+5. Старые клиенты должны игнорировать неизвестные поля.
+6. Для одного значения используется одно каноническое имя.
+7. `@JsonAlias` в первой версии не используется.
 
-Переименование опубликованного поля является несовместимым изменением и должно сопровождаться новой версией контракта.
+Переименование опубликованного JSON-поля является несовместимым изменением и требует новой версии контракта.
 
 ---
 
 # Тестирование
 
-Запуск тестов:
+Запуск:
 
 ```bash
 ./mvnw test
@@ -1061,53 +1221,74 @@ throw exception;
 chmod +x mvnw
 ```
 
-Тесты моделей проверяют:
+## Тесты моделей
 
-* точный формат timestamp;
+Проверяют:
+
 * обязательность полей;
 * диапазон HTTP-статусов;
-* формат публичных кодов;
+* точный формат timestamp;
+* публичные коды;
 * запрет Java-типов исключений;
 * неизменяемость списков;
-* ограничение размера списков;
+* ограничения размера;
 * value-семантику;
-* чтение неизвестных JSON-полей.
+* чтение неизвестных полей.
 
-`ExceptionChainTests` проверяет:
+## ExceptionChainTests
 
-* правильный порядок элементов;
+Проверяют:
+
+* порядок элементов;
 * сохранение существующих элементов;
-* неизменяемость;
+* отсутствие дубликатов;
 * ограничение размера;
-* отсутствие дублей одного уровня.
+* неизменяемость входной коллекции.
 
-`UnifiedErrorExceptionTests` проверяет:
+## UnifiedErrorExceptionTests
+
+Проверяют:
 
 * создание из обычного исключения;
 * сохранение исходной причины;
-* сохранение timestamp, кода и details;
+* сохранение timestamp, кода и `details`;
 * неизменность `errorId`;
-* добавление контекста к тому же экземпляру;
-* повторную обработку уже структурированного исключения;
-* восстановление из ответа другого сервиса;
+* добавление контекста к тому же исключению;
+* повторную обработку;
+* восстановление из `ErrorResponse`;
 * сохранение удалённой цепочки;
-* поведение при превышении локального лимита;
-* отсутствие дублирующихся уровней;
-* преобразование обратно в `ErrorResponse` без потери данных.
+* поведение при превышении лимита;
+* преобразование обратно в `ErrorResponse`.
+
+## UnifiedGlobalExceptionHandlerTests
+
+Проверяют:
+
+* бизнес-ошибки;
+* ошибки валидации;
+* HTTP 4xx удалённого сервиса;
+* HTTP 5xx удалённого сервиса;
+* таймаут;
+* стандартную Spring-ошибку 404;
+* неизвестное исключение;
+* отсутствие технических данных;
+* приоритет локального пользовательского обработчика;
+* минимальный приоритет глобального advice.
 
 ---
 
-# Известные ограничения текущей версии
+# Известные ограничения
 
-Текущая версия не реализует:
+Текущая версия пока не содержит:
 
-* автоматическую Spring Boot автоконфигурацию;
-* глобальный обработчик REST-исключений;
+* Spring Boot starter и автоконфигурацию;
 * автоматическое логирование;
 * AOP-аннотацию для добавления контекста;
-* автоматический разбор HTTP-ошибок удалённых сервисов;
-* поддержку `RestClient`, `WebClient` или `RestTemplate`;
-* конфигурирование через `application.yaml`;
-* признак того, что часть цепочки была отброшена.
+* автоматическое восстановление структурированной ошибки из тела удалённого HTTP-ответа;
+* конфигурирование сообщений через отдельный каталог;
+* поддержку `WebClient`;
+* поддержку реактивного Spring WebFlux;
+* признак, сообщающий клиенту, что цепочка достигла лимита;
+* автоматическую корреляцию ошибки между сервисами через HTTP-заголовок.
 
-Эти возможности могут быть добавлены в следующих задачах поверх существующих моделей, `ExceptionChain` и `UnifiedErrorException`.
+Эти возможности могут быть добавлены в следующих задачах поверх существующих моделей, `ExceptionChain`, `UnifiedErrorException` и `UnifiedGlobalExceptionHandler`.
