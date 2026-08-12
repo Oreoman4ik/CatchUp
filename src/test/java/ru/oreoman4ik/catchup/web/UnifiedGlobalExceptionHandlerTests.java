@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageConversionException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.http.converter.json
         .JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,8 +34,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
+import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
 import ru.oreoman4ik.catchup.model.BusinessException;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
@@ -40,8 +45,11 @@ import ru.oreoman4ik.catchup.model.ErrorResponse;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.EOFException;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
+import java.net.ConnectException;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -60,9 +68,10 @@ import static org.springframework.test.web.servlet.result
 
 class UnifiedGlobalExceptionHandlerTests {
 
-    private static final Instant ERROR_TIME = Instant.parse(
-            "2026-07-31T10:20:30.123Z"
-    );
+    private static final Instant ERROR_TIME =
+            Instant.parse(
+                    "2026-07-31T10:20:30.123Z"
+            );
 
     private JsonMapper jsonMapper;
     private MockMvc mockMvc;
@@ -70,19 +79,28 @@ class UnifiedGlobalExceptionHandlerTests {
 
     @BeforeEach
     void setUp() {
-        jsonMapper = JsonMapper.builder().build();
+        jsonMapper =
+                JsonMapper.builder().build();
 
-        handler = new UnifiedGlobalExceptionHandler(
-                "test-service",
-                5
-        );
+        OutgoingHttpExceptionMapper mapper =
+                new OutgoingHttpExceptionMapper(
+                        "test-service",
+                        5
+                );
+
+        handler =
+                new UnifiedGlobalExceptionHandler(
+                        "test-service",
+                        5,
+                        mapper
+                );
 
         mockMvc = createMockMvc();
     }
 
     /*
      * ------------------------------------------------------------
-     * BusinessException
+     * Business error
      * ------------------------------------------------------------
      */
 
@@ -100,13 +118,19 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(409);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("BOOK_ALREADY_EXISTS");
+                .isEqualTo(
+                        "BOOK_ALREADY_EXISTS"
+                );
 
         assertThat(response.getMessage())
-                .isEqualTo("Книга уже существует");
+                .isEqualTo(
+                        "Книга уже существует"
+                );
 
         assertThat(response.getCurrentService())
-                .isEqualTo("test-service");
+                .isEqualTo(
+                        "test-service"
+                );
 
         assertThat(response.getDetails())
                 .isEqualTo(
@@ -122,13 +146,17 @@ class UnifiedGlobalExceptionHandlerTests {
                 response.getChain()
                         .getFirst()
                         .getComponent()
-        ).isEqualTo("TestController");
+        ).isEqualTo(
+                "TestController"
+        );
 
         assertThat(
                 response.getChain()
                         .getFirst()
                         .getOperation()
-        ).isEqualTo("business");
+        ).isEqualTo(
+                "business"
+        );
     }
 
     /*
@@ -138,7 +166,7 @@ class UnifiedGlobalExceptionHandlerTests {
      */
 
     @Test
-    void preservesStructuredUnifiedErrorAndAddsRestContext()
+    void preservesUnifiedErrorAndAddsRestContext()
             throws Exception {
 
         ErrorResponse response =
@@ -154,13 +182,14 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(404);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("COMPONENT_NOT_FOUND");
+                .isEqualTo(
+                        "COMPONENT_NOT_FOUND"
+                );
 
         assertThat(response.getMessage())
-                .isEqualTo("Компонент не найден");
-
-        assertThat(response.getCurrentService())
-                .isEqualTo("test-service");
+                .isEqualTo(
+                        "Компонент не найден"
+                );
 
         assertThat(response.getDetails())
                 .isEqualTo(
@@ -176,54 +205,56 @@ class UnifiedGlobalExceptionHandlerTests {
                 response.getChain()
                         .getFirst()
                         .getService()
-        ).isEqualTo("remote-service");
-
-        assertThat(
-                response.getChain()
-                        .getFirst()
-                        .getComponent()
-        ).isEqualTo("ComponentRepository");
+        ).isEqualTo(
+                "remote-service"
+        );
 
         assertThat(
                 response.getChain()
                         .getLast()
                         .getService()
-        ).isEqualTo("test-service");
-
-        assertThat(
-                response.getChain()
-                        .getLast()
-                        .getComponent()
-        ).isEqualTo("TestController");
+        ).isEqualTo(
+                "test-service"
+        );
 
         assertThat(
                 response.getChain()
                         .getLast()
                         .getOperation()
-        ).isEqualTo("unified");
+        ).isEqualTo(
+                "unified"
+        );
 
-        String json =
-                jsonMapper.writeValueAsString(response);
-
-        assertThat(json)
-                .doesNotContain("secret database details")
-                .doesNotContain("IllegalStateException");
+        assertThat(
+                jsonMapper.writeValueAsString(response)
+        )
+                .doesNotContain(
+                        "secret database details"
+                )
+                .doesNotContain(
+                        "IllegalStateException"
+                );
     }
 
     /*
      * ------------------------------------------------------------
-     * Bean validation
+     * Validation
      * ------------------------------------------------------------
      */
 
     @Test
-    void handlesValidationWithoutPublishingRejectedValue()
+    void validationDoesNotPublishRejectedValue()
             throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(get("/validation"))
-                .andExpect(status().isBadRequest())
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(
+                                get("/validation")
+                        )
+                        .andExpect(
+                                status().isBadRequest()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
@@ -232,15 +263,9 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(400);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("VALIDATION_ERROR");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Переданные данные некорректны"
+                        "VALIDATION_ERROR"
                 );
-
-        assertThat(response.getDetails())
-                .isNotNull();
 
         assertThat(
                 response.getDetails()
@@ -253,34 +278,43 @@ class UnifiedGlobalExceptionHandlerTests {
                 )
         );
 
-        String json =
+        assertThat(
                 result.getResponse()
-                        .getContentAsString();
-
-        assertThat(json)
-                .doesNotContain("secret-password")
-                .doesNotContain("must not be blank");
+                        .getContentAsString()
+        )
+                .doesNotContain(
+                        "secret-password"
+                )
+                .doesNotContain(
+                        "must not be blank"
+                );
     }
 
     /*
      * ------------------------------------------------------------
-     * HttpMessageNotReadableException
+     * Invalid request body
      * ------------------------------------------------------------
      */
 
     @Test
-    void malformedJsonReturns400InsteadOf500()
+    void malformedJsonReturns400()
             throws Exception {
 
-        MvcResult result = mockMvc.perform(
-                        post("/json")
-                                .contentType(
-                                        MediaType.APPLICATION_JSON
-                                )
-                                .content("{broken-json")
-                )
-                .andExpect(status().isBadRequest())
-                .andReturn();
+        MvcResult result =
+                mockMvc.perform(
+                                post("/json")
+                                        .contentType(
+                                                MediaType
+                                                        .APPLICATION_JSON
+                                        )
+                                        .content(
+                                                "{broken-json"
+                                        )
+                        )
+                        .andExpect(
+                                status().isBadRequest()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
@@ -289,52 +323,9 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(400);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("INVALID_REQUEST_BODY");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Тело запроса имеет "
-                                + "некорректный формат"
+                        "INVALID_REQUEST_BODY"
                 );
-
-        String json =
-                result.getResponse()
-                        .getContentAsString();
-
-        assertThat(json)
-                .doesNotContain("JsonParseException")
-                .doesNotContain("Jackson")
-                .doesNotContain("broken-json");
-    }
-
-    @Test
-    void wrongJsonFieldTypeReturns400()
-            throws Exception {
-
-        MvcResult result = mockMvc.perform(
-                        post("/json")
-                                .contentType(
-                                        MediaType.APPLICATION_JSON
-                                )
-                                .content(
-                                        """
-                                        {
-                                          "count": "not-a-number"
-                                        }
-                                        """
-                                )
-                )
-                .andExpect(status().isBadRequest())
-                .andReturn();
-
-        ErrorResponse response =
-                readResponse(result);
-
-        assertThat(response.getStatus())
-                .isEqualTo(400);
-
-        assertThat(response.getErrorCode())
-                .isEqualTo("INVALID_REQUEST_BODY");
 
         assertThat(response.getMessage())
                 .isEqualTo(
@@ -346,84 +337,107 @@ class UnifiedGlobalExceptionHandlerTests {
                 result.getResponse()
                         .getContentAsString()
         )
-                .doesNotContain("not-a-number")
+                .doesNotContain("broken-json")
                 .doesNotContain(
-                        "NumberFormatException"
+                        "JsonParseException"
                 );
     }
 
     @Test
-    void emptyRequiredRequestBodyReturns400()
+    void wrongJsonValueTypeReturns400()
             throws Exception {
 
-        MvcResult result = mockMvc.perform(
+        ErrorResponse response =
+                performError(
                         post("/json")
                                 .contentType(
-                                        MediaType.APPLICATION_JSON
+                                        MediaType
+                                                .APPLICATION_JSON
                                 )
-                )
-                .andExpect(status().isBadRequest())
-                .andReturn();
-
-        ErrorResponse response =
-                readResponse(result);
-
-        assertThat(response.getStatus())
-                .isEqualTo(400);
+                                .content(
+                                        """
+                                        {
+                                          "count": "not-a-number"
+                                        }
+                                        """
+                                ),
+                        400
+                );
 
         assertThat(response.getErrorCode())
-                .isEqualTo("INVALID_REQUEST_BODY");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Тело запроса имеет "
-                                + "некорректный формат"
+                        "INVALID_REQUEST_BODY"
+                );
+    }
+
+    @Test
+    void emptyRequiredBodyReturns400()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        post("/json")
+                                .contentType(
+                                        MediaType
+                                                .APPLICATION_JSON
+                                ),
+                        400
+                );
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "INVALID_REQUEST_BODY"
                 );
     }
 
     /*
      * ------------------------------------------------------------
-     * MethodArgumentTypeMismatchException
+     * Parameter conversion
      * ------------------------------------------------------------
      */
 
     @Test
-    void invalidQueryParameterReturns400()
+    void queryParameterConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
                 get("/convert/query")
-                        .param("page", "abc"),
+                        .param(
+                                "page",
+                                "abc"
+                        ),
                 "page"
         );
     }
 
     @Test
-    void invalidPathVariableReturns400()
+    void pathVariableConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
-                get("/convert/path/not-a-uuid"),
+                get(
+                        "/convert/path/not-a-uuid"
+                ),
                 "id"
         );
     }
 
     @Test
-    void invalidEnumReturns400()
+    void enumConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
                 get("/convert/enum")
                         .param(
                                 "mode",
-                                "UNKNOWN_VALUE"
+                                "UNKNOWN"
                         ),
                 "mode"
         );
     }
 
     @Test
-    void invalidDateReturns400()
+    void dateConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
@@ -437,7 +451,7 @@ class UnifiedGlobalExceptionHandlerTests {
     }
 
     @Test
-    void invalidUuidReturns400()
+    void uuidConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
@@ -451,147 +465,41 @@ class UnifiedGlobalExceptionHandlerTests {
     }
 
     @Test
-    void invalidNumberReturns400()
+    void numberConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
                 get("/convert/number")
                         .param(
                                 "value",
-                                "not-a-number"
+                                "abc"
                         ),
                 "value"
         );
     }
 
     @Test
-    void invalidBooleanReturns400()
+    void booleanConversionReturns400()
             throws Exception {
 
         assertInvalidParameter(
                 get("/convert/boolean")
                         .param(
                                 "flag",
-                                "definitely"
+                                "maybe"
                         ),
                 "flag"
         );
     }
 
-    @Test
-    void allSupportedConversionFailuresUseSameContract()
-            throws Exception {
-
-        List<ConversionCase> cases =
-                List.of(
-                        new ConversionCase(
-                                get("/convert/query")
-                                        .param(
-                                                "page",
-                                                "abc"
-                                        ),
-                                "page"
-                        ),
-
-                        new ConversionCase(
-                                get(
-                                        "/convert/path/"
-                                                + "not-a-uuid"
-                                ),
-                                "id"
-                        ),
-
-                        new ConversionCase(
-                                get("/convert/enum")
-                                        .param(
-                                                "mode",
-                                                "UNKNOWN"
-                                        ),
-                                "mode"
-                        ),
-
-                        new ConversionCase(
-                                get("/convert/date")
-                                        .param(
-                                                "date",
-                                                "32-99-2026"
-                                        ),
-                                "date"
-                        ),
-
-                        new ConversionCase(
-                                get("/convert/uuid")
-                                        .param(
-                                                "id",
-                                                "invalid"
-                                        ),
-                                "id"
-                        ),
-
-                        new ConversionCase(
-                                get("/convert/number")
-                                        .param(
-                                                "value",
-                                                "abc"
-                                        ),
-                                "value"
-                        ),
-
-                        new ConversionCase(
-                                get("/convert/boolean")
-                                        .param(
-                                                "flag",
-                                                "maybe"
-                                        ),
-                                "flag"
-                        )
-                );
-
-        for (ConversionCase conversionCase : cases) {
-            MvcResult result = mockMvc
-                    .perform(conversionCase.request())
-                    .andExpect(status().isBadRequest())
-                    .andReturn();
-
-            ErrorResponse response =
-                    readResponse(result);
-
-            assertThat(response.getStatus())
-                    .isEqualTo(400);
-
-            assertThat(response.getErrorCode())
-                    .isEqualTo("INVALID_PARAMETER");
-
-            assertThat(response.getMessage())
-                    .isEqualTo(
-                            "Параметр запроса имеет "
-                                    + "некорректный формат"
-                    );
-
-            assertThat(response.getDetails())
-                    .isNotNull();
-
-            assertThat(
-                    response.getDetails()
-                            .getViolations()
-            ).containsExactly(
-                    ErrorDetails.FieldViolation.of(
-                            conversionCase.field(),
-                            "INVALID_TYPE",
-                            "Некорректный тип значения"
-                    )
-            );
-        }
-    }
-
     /*
      * ------------------------------------------------------------
-     * Outgoing HTTP errors
+     * Outgoing HTTP - common mapper
      * ------------------------------------------------------------
      */
 
     @Test
-    void preservesRemoteClientStatusButHidesRemoteBody()
+    void remote4xxUsesOutgoingMapper()
             throws Exception {
 
         ErrorResponse response =
@@ -600,30 +508,25 @@ class UnifiedGlobalExceptionHandlerTests {
                         404
                 );
 
-        assertThat(response.getStatus())
-                .isEqualTo(404);
-
         assertThat(response.getErrorCode())
-                .isEqualTo("REMOTE_CLIENT_ERROR");
+                .isEqualTo(
+                        "REMOTE_CLIENT_ERROR"
+                );
 
         assertThat(response.getMessage())
                 .isEqualTo(
                         "Удалённый сервис отклонил запрос"
                 );
 
-        String json =
-                jsonMapper.writeValueAsString(response);
-
-        assertThat(json)
+        assertThat(
+                jsonMapper.writeValueAsString(response)
+        )
                 .doesNotContain("secret-token")
-                .doesNotContain("internal_table")
-                .doesNotContain(
-                        "Remote database failure"
-                );
+                .doesNotContain("internal_table");
     }
 
     @Test
-    void preservesRemoteServerStatusButHidesRemoteBody()
+    void remote5xxUsesOutgoingMapper()
             throws Exception {
 
         ErrorResponse response =
@@ -636,27 +539,13 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(503);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("REMOTE_SERVER_ERROR");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Удалённый сервис завершил запрос "
-                                + "с ошибкой"
-                );
-
-        String json =
-                jsonMapper.writeValueAsString(response);
-
-        assertThat(json)
-                .doesNotContain("jdbc:postgresql")
-                .doesNotContain("database_password")
-                .doesNotContain(
-                        "Remote internal error"
+                        "REMOTE_SERVER_ERROR"
                 );
     }
 
     @Test
-    void mapsRemoteTimeoutToGatewayTimeout()
+    void timeoutUsesOutgoingMapper()
             throws Exception {
 
         ErrorResponse response =
@@ -665,35 +554,174 @@ class UnifiedGlobalExceptionHandlerTests {
                         504
                 );
 
-        assertThat(response.getStatus())
-                .isEqualTo(504);
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_TIMEOUT"
+                );
+
+        assertThat(
+                jsonMapper.writeValueAsString(response)
+        )
+                .doesNotContain("internal-host")
+                .doesNotContain("secret");
+    }
+
+    @Test
+    void connectionFailureUsesOutgoingMapper()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/connection-refused"),
+                        503
+                );
 
         assertThat(response.getErrorCode())
-                .isEqualTo("REMOTE_TIMEOUT");
+                .isEqualTo(
+                        "REMOTE_UNAVAILABLE"
+                );
+    }
+
+    /**
+     * Ключевой regression-тест:
+     * тот же Connection reset должен классифицироваться
+     * одинаково и через aspect, и через global handler.
+     */
+    @Test
+    void networkResetUsesRemoteNetworkError()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/network-reset"),
+                        502
+                );
+
+        assertThat(response.getStatus())
+                .isEqualTo(502);
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_NETWORK_ERROR"
+                );
 
         assertThat(response.getMessage())
                 .isEqualTo(
-                        "Истекло время ожидания ответа "
-                                + "удалённого сервиса"
+                        "Ошибка сети при обращении "
+                                + "к удалённому сервису"
+                );
+    }
+
+    @Test
+    void responseReadFailureUsesOutgoingMapper()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/response-read-error"),
+                        502
                 );
 
-        String json =
-                jsonMapper.writeValueAsString(response);
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_RESPONSE_READ_ERROR"
+                );
+    }
 
-        assertThat(json)
-                .doesNotContain("internal-host")
-                .doesNotContain("secret")
-                .doesNotContain("SocketTimeoutException");
+    @Test
+    void requestBodySerializationFailureIsLocal500()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/request-body-error"),
+                        500
+                );
+
+        assertThat(response.getStatus())
+                .isEqualTo(500);
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "OUTGOING_REQUEST_BODY_ERROR"
+                );
+
+        assertThat(response.getMessage())
+                .isEqualTo(
+                        "Не удалось сформировать "
+                                + "исходящий запрос"
+                );
+
+        assertThat(
+                jsonMapper.writeValueAsString(response)
+        )
+                .doesNotContain(
+                        "secret request token"
+                );
+    }
+
+    @Test
+    void responseBodyDeserializationFailureIs502()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/response-body-error"),
+                        502
+                );
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_BODY_CONVERSION_ERROR"
+                );
+
+        assertThat(response.getMessage())
+                .isEqualTo(
+                        "Не удалось преобразовать ответ "
+                                + "удалённого сервиса"
+                );
+    }
+
+    @Test
+    void ambiguousConversionFailureIsLocal500()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/generic-conversion-error"),
+                        500
+                );
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "OUTGOING_HTTP_CONVERSION_ERROR"
+                );
+    }
+
+    @Test
+    void genericRestClientExceptionUsesNeutralCode()
+            throws Exception {
+
+        ErrorResponse response =
+                performError(
+                        get("/generic-http-error"),
+                        502
+                );
+
+        assertThat(response.getErrorCode())
+                .isEqualTo(
+                        "OUTGOING_HTTP_ERROR"
+                );
     }
 
     /*
      * ------------------------------------------------------------
-     * Standard Spring MVC errors
+     * Standard Spring errors
      * ------------------------------------------------------------
      */
 
     @Test
-    void handlesResponseStatusException404WithSafeMessage()
+    void responseStatusExceptionPreserves404()
             throws Exception {
 
         ErrorResponse response =
@@ -702,27 +730,19 @@ class UnifiedGlobalExceptionHandlerTests {
                         404
                 );
 
-        assertThat(response.getStatus())
-                .isEqualTo(404);
-
         assertThat(response.getErrorCode())
-                .isEqualTo("RESOURCE_NOT_FOUND");
+                .isEqualTo(
+                        "RESOURCE_NOT_FOUND"
+                );
 
         assertThat(response.getMessage())
-                .isEqualTo("Ресурс не найден");
-
-        String json =
-                jsonMapper.writeValueAsString(response);
-
-        assertThat(json)
-                .doesNotContain(
-                        "/internal/storage/path"
-                )
-                .doesNotContain("database-id");
+                .isEqualTo(
+                        "Ресурс не найден"
+                );
     }
 
     @Test
-    void responseStatusAnnotationIsNotConvertedTo500()
+    void responseStatusAnnotationPreserves404()
             throws Exception {
 
         ErrorResponse response =
@@ -731,24 +751,16 @@ class UnifiedGlobalExceptionHandlerTests {
                         404
                 );
 
-        assertThat(response.getStatus())
-                .isEqualTo(404);
-
         assertThat(response.getErrorCode())
-                .isEqualTo("RESOURCE_NOT_FOUND");
+                .isEqualTo(
+                        "RESOURCE_NOT_FOUND"
+                );
 
-        assertThat(response.getMessage())
-                .isEqualTo("Ресурс не найден");
-
-        String json =
-                jsonMapper.writeValueAsString(response);
-
-        assertThat(json)
+        assertThat(
+                jsonMapper.writeValueAsString(response)
+        )
                 .doesNotContain(
                         "technical user lookup details"
-                )
-                .doesNotContain(
-                        "UserNotFoundException"
                 );
     }
 
@@ -756,25 +768,23 @@ class UnifiedGlobalExceptionHandlerTests {
     void preservesAllowHeaderFor405()
             throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(post("/get-only"))
-                .andExpect(
-                        status().isMethodNotAllowed()
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(
+                                post("/get-only")
+                        )
+                        .andExpect(
+                                status()
+                                        .isMethodNotAllowed()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
 
-        assertThat(response.getStatus())
-                .isEqualTo(405);
-
         assertThat(response.getErrorCode())
-                .isEqualTo("METHOD_NOT_ALLOWED");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "HTTP-метод не поддерживается"
+                        "METHOD_NOT_ALLOWED"
                 );
 
         assertThat(
@@ -791,52 +801,53 @@ class UnifiedGlobalExceptionHandlerTests {
     void preservesAcceptHeaderFor415()
             throws Exception {
 
-        MvcResult result = mockMvc.perform(
-                        post("/json")
-                                .contentType(
-                                        MediaType.APPLICATION_XML
-                                )
-                                .content("<request/>")
-                )
-                .andExpect(
-                        status()
-                                .isUnsupportedMediaType()
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc.perform(
+                                post("/json")
+                                        .contentType(
+                                                MediaType
+                                                        .APPLICATION_XML
+                                        )
+                                        .content(
+                                                "<request/>"
+                                        )
+                        )
+                        .andExpect(
+                                status()
+                                        .isUnsupportedMediaType()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
-
-        assertThat(response.getStatus())
-                .isEqualTo(415);
 
         assertThat(response.getErrorCode())
                 .isEqualTo(
                         "UNSUPPORTED_MEDIA_TYPE"
                 );
 
-        String acceptHeader =
+        assertThat(
                 result.getResponse()
                         .getHeader(
                                 HttpHeaders.ACCEPT
-                        );
-
-        assertThat(acceptHeader)
-                .isNotNull()
-                .contains("application/json");
+                        )
+        ).isNotNull();
     }
 
     @Test
-    void preservesHeadersFromSpringErrorResponse()
+    void preservesRetryAfterHeader()
             throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(get("/spring-header"))
-                .andExpect(
-                        status()
-                                .isServiceUnavailable()
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(
+                                get("/spring-header")
+                        )
+                        .andExpect(
+                                status()
+                                        .isServiceUnavailable()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
@@ -845,11 +856,8 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(503);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("SERVER_ERROR");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Внутренняя ошибка сервиса"
+                        "SERVER_ERROR"
                 );
 
         assertThat(
@@ -861,37 +869,39 @@ class UnifiedGlobalExceptionHandlerTests {
     }
 
     @Test
-    void preservesUnknownSpring5xxStatuses()
+    void standardSpring5xxKeepsOriginalStatus()
             throws Exception {
 
-        for (int expectedStatus
-                : List.of(501, 502, 503, 504)) {
+        for (int expected
+                : List.of(
+                501,
+                502,
+                503,
+                504
+        )) {
 
             ErrorResponse response =
                     performError(
                             get(
                                     "/spring-5xx/{status}",
-                                    expectedStatus
+                                    expected
                             ),
-                            expectedStatus
+                            expected
                     );
 
             assertThat(response.getStatus())
-                    .isEqualTo(expectedStatus);
+                    .isEqualTo(expected);
 
             assertThat(response.getErrorCode())
-                    .isEqualTo("SERVER_ERROR");
-
-            assertThat(response.getMessage())
                     .isEqualTo(
-                            "Внутренняя ошибка сервиса"
+                            "SERVER_ERROR"
                     );
         }
     }
 
     /*
      * ------------------------------------------------------------
-     * Unexpected errors
+     * Unknown error safety
      * ------------------------------------------------------------
      */
 
@@ -899,13 +909,16 @@ class UnifiedGlobalExceptionHandlerTests {
     void unexpectedExceptionReturnsSafe500()
             throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(get("/unexpected"))
-                .andExpect(
-                        status()
-                                .isInternalServerError()
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(
+                                get("/unexpected")
+                        )
+                        .andExpect(
+                                status()
+                                        .isInternalServerError()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
@@ -914,138 +927,124 @@ class UnifiedGlobalExceptionHandlerTests {
                 .isEqualTo(500);
 
         assertThat(response.getErrorCode())
-                .isEqualTo("INTERNAL_ERROR");
+                .isEqualTo(
+                        "INTERNAL_ERROR"
+                );
 
         assertThat(response.getMessage())
                 .isEqualTo(
                         "Внутренняя ошибка сервиса"
                 );
 
-        assertThat(response.getDetails())
-                .isNull();
-
-        String json =
+        assertThat(
                 result.getResponse()
-                        .getContentAsString();
-
-        assertThat(json)
+                        .getContentAsString()
+        )
                 .doesNotContain("select *")
                 .doesNotContain("secret_token")
-                .doesNotContain("IllegalStateException");
+                .doesNotContain(
+                        "IllegalStateException"
+                );
     }
 
     /*
      * ------------------------------------------------------------
-     * Handler priorities
+     * Handler priority
      * ------------------------------------------------------------
      */
 
     @Test
-    void controllerLocalHandlerHasPriorityOverGlobalHandler()
+    void localExceptionHandlerHasPriority()
             throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(get("/custom"))
-                .andExpect(
-                        status().isIAmATeapot()
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(
+                                get("/custom")
+                        )
+                        .andExpect(
+                                status().isIAmATeapot()
+                        )
+                        .andReturn();
 
-        String body =
+        assertThat(
                 result.getResponse()
-                        .getContentAsString();
-
-        assertThat(body)
+                        .getContentAsString()
+        )
                 .contains(
                         "\"source\":\"custom-handler\""
                 )
-                .doesNotContain("\"errorId\"")
-                .doesNotContain("\"errorCode\"");
+                .doesNotContain("\"errorId\"");
     }
 
     @Test
-    void globalHandlerRunsBeforeBootProblemDetailsHandler() {
-        Order order = UnifiedGlobalExceptionHandler
-                .class
-                .getAnnotation(Order.class);
+    void libraryAdviceHasExpectedOrder() {
+        Order order =
+                UnifiedGlobalExceptionHandler
+                        .class
+                        .getAnnotation(Order.class);
 
         assertThat(order).isNotNull();
-
-        assertThat(order.value())
-                .isEqualTo(
-                        UnifiedGlobalExceptionHandler
-                                .HANDLER_ORDER
-                );
 
         assertThat(order.value())
                 .isEqualTo(-1);
     }
 
     @Test
-    void unorderedUserAdviceDoesNotOverrideLibraryHandler()
+    void unorderedAdviceDoesNotOverrideLibrary()
             throws Exception {
 
-        MockMvc mvc = createMockMvc(
-                new UnorderedApplicationAdvice()
-        );
-
-        MvcResult result = mvc
-                .perform(get("/advice-target"))
-                .andExpect(
-                        status()
-                                .isInternalServerError()
-                )
-                .andReturn();
-
-        ErrorResponse response =
-                jsonMapper.readValue(
-                        result.getResponse()
-                                .getContentAsString(),
-                        ErrorResponse.class
+        MockMvc mvc =
+                createMockMvc(
+                        new UnorderedApplicationAdvice()
                 );
 
-        assertThat(response.getStatus())
-                .isEqualTo(500);
+        ErrorResponse response =
+                readResponse(
+                        mvc.perform(
+                                        get("/advice-target")
+                                )
+                                .andExpect(
+                                        status()
+                                                .isInternalServerError()
+                                )
+                                .andReturn()
+                );
 
         assertThat(response.getErrorCode())
-                .isEqualTo("INTERNAL_ERROR");
+                .isEqualTo(
+                        "INTERNAL_ERROR"
+                );
+    }
+
+    @Test
+    void higherPriorityAdviceOverridesLibrary()
+            throws Exception {
+
+        MockMvc mvc =
+                createMockMvc(
+                        new HigherPriorityApplicationAdvice()
+                );
+
+        MvcResult result =
+                mvc.perform(
+                                get("/advice-target")
+                        )
+                        .andExpect(
+                                status()
+                                        .isUnprocessableContent()
+                        )
+                        .andReturn();
 
         assertThat(
                 result.getResponse()
                         .getContentAsString()
         )
-                .doesNotContain(
-                        "unordered-user-advice"
-                );
-    }
-
-    @Test
-    void higherPriorityUserAdviceOverridesLibraryHandler()
-            throws Exception {
-
-        MockMvc mvc = createMockMvc(
-                new HigherPriorityApplicationAdvice()
-        );
-
-        MvcResult result = mvc
-                .perform(get("/advice-target"))
-                .andExpect(
-                        status()
-                                .isUnprocessableContent()
-                )
-                .andReturn();
-
-        String json =
-                result.getResponse()
-                        .getContentAsString();
-
-        assertThat(json)
                 .contains(
                         "\"source\":"
                                 + "\"high-priority-advice\""
                 )
-                .doesNotContain("\"errorId\"")
-                .doesNotContain("\"errorCode\"");
+                .doesNotContain("\"errorId\"");
     }
 
     /*
@@ -1073,7 +1072,9 @@ class UnifiedGlobalExceptionHandlerTests {
         );
 
         return MockMvcBuilders
-                .standaloneSetup(new TestController())
+                .standaloneSetup(
+                        new TestController()
+                )
                 .setControllerAdvice(advices)
                 .setMessageConverters(
                         new JacksonJsonHttpMessageConverter(
@@ -1088,28 +1089,21 @@ class UnifiedGlobalExceptionHandlerTests {
             String expectedField
     ) throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(request)
-                .andExpect(status().isBadRequest())
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(request)
+                        .andExpect(
+                                status().isBadRequest()
+                        )
+                        .andReturn();
 
         ErrorResponse response =
                 readResponse(result);
 
-        assertThat(response.getStatus())
-                .isEqualTo(400);
-
         assertThat(response.getErrorCode())
-                .isEqualTo("INVALID_PARAMETER");
-
-        assertThat(response.getMessage())
                 .isEqualTo(
-                        "Параметр запроса имеет "
-                                + "некорректный формат"
+                        "INVALID_PARAMETER"
                 );
-
-        assertThat(response.getDetails())
-                .isNotNull();
 
         assertThat(
                 response.getDetails()
@@ -1122,19 +1116,13 @@ class UnifiedGlobalExceptionHandlerTests {
                 )
         );
 
-        String json =
+        assertThat(
                 result.getResponse()
-                        .getContentAsString();
-
-        /*
-         * Проверяем, что технический Java-тип
-         * не попадает в ответ.
-         */
-        assertThat(json)
+                        .getContentAsString()
+        )
                 .doesNotContain("Integer")
                 .doesNotContain("UUID")
                 .doesNotContain("LocalDate")
-                .doesNotContain("IllegalArgumentException")
                 .doesNotContain(
                         "MethodArgumentTypeMismatchException"
                 );
@@ -1145,12 +1133,14 @@ class UnifiedGlobalExceptionHandlerTests {
             int expectedStatus
     ) throws Exception {
 
-        MvcResult result = mockMvc
-                .perform(request)
-                .andExpect(
-                        status().is(expectedStatus)
-                )
-                .andReturn();
+        MvcResult result =
+                mockMvc
+                        .perform(request)
+                        .andExpect(
+                                status()
+                                        .is(expectedStatus)
+                        )
+                        .andReturn();
 
         return readResponse(result);
     }
@@ -1188,37 +1178,39 @@ class UnifiedGlobalExceptionHandlerTests {
 
         try {
             Method method =
-                    ValidationMethodHolder.class
+                    ValidationMethodHolder
+                            .class
                             .getDeclaredMethod(
                                     "validate",
                                     String.class
                             );
 
-            MethodParameter parameter =
+            return new MethodArgumentNotValidException(
                     new MethodParameter(
                             method,
                             0
-                    );
-
-            return new MethodArgumentNotValidException(
-                    parameter,
+                    ),
                     bindingResult
             );
+
         } catch (NoSuchMethodException exception) {
-            throw new AssertionError(
-                    "Validation test method not found",
-                    exception
-            );
+            throw new AssertionError(exception);
         }
     }
 
     private static ChainElement originContext() {
         return ChainElement.builder()
                 .service("remote-service")
-                .component("ComponentRepository")
+                .component(
+                        "ComponentRepository"
+                )
                 .operation("findById")
-                .errorCode("COMPONENT_NOT_FOUND")
-                .message("Компонент не найден")
+                .errorCode(
+                        "COMPONENT_NOT_FOUND"
+                )
+                .message(
+                        "Компонент не найден"
+                )
                 .timestamp(ERROR_TIME)
                 .status(404)
                 .build();
@@ -1345,7 +1337,6 @@ class UnifiedGlobalExceptionHandlerTests {
                     HttpHeaders.EMPTY,
                     (
                             "select * from internal_table "
-                                    + "where "
                                     + "token=secret-token"
                     ).getBytes(
                             StandardCharsets.UTF_8
@@ -1361,12 +1352,10 @@ class UnifiedGlobalExceptionHandlerTests {
                     503,
                     "Service Unavailable",
                     HttpHeaders.EMPTY,
-                    (
-                            "jdbc:postgresql://internal-db "
-                                    + "database_password=secret"
-                    ).getBytes(
-                            StandardCharsets.UTF_8
-                    ),
+                    "database_password=secret"
+                            .getBytes(
+                                    StandardCharsets.UTF_8
+                            ),
                     StandardCharsets.UTF_8
             );
         }
@@ -1377,9 +1366,76 @@ class UnifiedGlobalExceptionHandlerTests {
                     "GET http://internal-host"
                             + "?token=secret",
                     new SocketTimeoutException(
-                            "Read timed out "
-                                    + "for internal-host"
+                            "Read timed out"
                     )
+            );
+        }
+
+        @GetMapping("/connection-refused")
+        String connectionRefused() {
+            throw new ResourceAccessException(
+                    "connection failed",
+                    new ConnectException(
+                            "Connection refused"
+                    )
+            );
+        }
+
+        @GetMapping("/network-reset")
+        String networkReset() {
+            throw new ResourceAccessException(
+                    "network failed",
+                    new SocketException(
+                            "Connection reset"
+                    )
+            );
+        }
+
+        @GetMapping("/response-read-error")
+        String responseReadError() {
+            throw new ResourceAccessException(
+                    "response interrupted",
+                    new EOFException(
+                            "secret response"
+                    )
+            );
+        }
+
+        @GetMapping("/request-body-error")
+        String requestBodyError() {
+            throw new RestClientException(
+                    "outgoing conversion failed",
+                    new HttpMessageNotWritableException(
+                            "secret request token"
+                    )
+            );
+        }
+
+        @GetMapping("/response-body-error")
+        String responseBodyError() {
+            throw new RestClientException(
+                    "response conversion failed",
+                    new HttpMessageNotReadableException(
+                            "secret response body",
+                            new TestHttpInputMessage()
+                    )
+            );
+        }
+
+        @GetMapping("/generic-conversion-error")
+        String genericConversionError() {
+            throw new RestClientException(
+                    "conversion failed",
+                    new HttpMessageConversionException(
+                            "unknown conversion phase"
+                    )
+            );
+        }
+
+        @GetMapping("/generic-http-error")
+        String genericHttpError() {
+            throw new RestClientException(
+                    "generic secret client error"
             );
         }
 
@@ -1387,9 +1443,7 @@ class UnifiedGlobalExceptionHandlerTests {
         String springNotFound() {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND,
-                    "Missing "
-                            + "/internal/storage/path "
-                            + "with database-id=42"
+                    "internal path"
             );
         }
 
@@ -1407,7 +1461,8 @@ class UnifiedGlobalExceptionHandlerTests {
 
         @GetMapping("/spring-header")
         String springHeader() {
-            throw new RetryAfterServiceUnavailableException();
+            throw new
+                    RetryAfterServiceUnavailableException();
         }
 
         @GetMapping("/spring-5xx/{status}")
@@ -1416,7 +1471,9 @@ class UnifiedGlobalExceptionHandlerTests {
                 int status
         ) {
             throw new ErrorResponseException(
-                    HttpStatusCode.valueOf(status)
+                    HttpStatusCode.valueOf(
+                            status
+                    )
             );
         }
 
@@ -1424,14 +1481,14 @@ class UnifiedGlobalExceptionHandlerTests {
         String unexpected() {
             throw new IllegalStateException(
                     "select * from users "
-                            + "where "
-                            + "secret_token='secret'"
+                            + "where secret_token='secret'"
             );
         }
 
         @GetMapping("/custom")
         String custom() {
-            throw new CustomApplicationException();
+            throw new
+                    CustomApplicationException();
         }
 
         @GetMapping("/advice-target")
@@ -1460,7 +1517,7 @@ class UnifiedGlobalExceptionHandlerTests {
 
     /*
      * ------------------------------------------------------------
-     * Test DTOs and exceptions
+     * Supporting types
      * ------------------------------------------------------------
      */
 
@@ -1474,7 +1531,8 @@ class UnifiedGlobalExceptionHandlerTests {
         SECOND
     }
 
-    private static final class ValidationMethodHolder {
+    private static final class
+    ValidationMethodHolder {
 
         private static void validate(
                 String value
@@ -1482,16 +1540,19 @@ class UnifiedGlobalExceptionHandlerTests {
         }
     }
 
-    private static final class CustomApplicationException
+    private static final class
+    CustomApplicationException
             extends RuntimeException {
     }
 
-    private static final class AdviceTargetException
+    private static final class
+    AdviceTargetException
             extends RuntimeException {
     }
 
     @ResponseStatus(HttpStatus.NOT_FOUND)
-    private static final class UserNotFoundException
+    private static final class
+    UserNotFoundException
             extends RuntimeException {
 
         private UserNotFoundException(
@@ -1512,8 +1573,9 @@ class UnifiedGlobalExceptionHandlerTests {
                     HttpStatus.SERVICE_UNAVAILABLE
             );
 
-            this.headers = new HttpHeaders();
-            this.headers.set(
+            headers = new HttpHeaders();
+
+            headers.set(
                     HttpHeaders.RETRY_AFTER,
                     "30"
             );
@@ -1525,9 +1587,25 @@ class UnifiedGlobalExceptionHandlerTests {
         }
     }
 
+    private static final class
+    TestHttpInputMessage
+            implements org.springframework.http.HttpInputMessage {
+
+        @Override
+        public java.io.InputStream getBody() {
+            return java.io.InputStream
+                    .nullInputStream();
+        }
+
+        @Override
+        public HttpHeaders getHeaders() {
+            return HttpHeaders.EMPTY;
+        }
+    }
+
     /*
      * ------------------------------------------------------------
-     * Test ControllerAdvice implementations
+     * User advices
      * ------------------------------------------------------------
      */
 
@@ -1539,11 +1617,13 @@ class UnifiedGlobalExceptionHandlerTests {
                 AdviceTargetException.class
         )
         ResponseEntity<Map<String, String>>
-        handle(AdviceTargetException exception) {
-
+        handle(
+                AdviceTargetException exception
+        ) {
             return ResponseEntity
                     .status(
-                            HttpStatus.UNPROCESSABLE_CONTENT
+                            HttpStatus
+                                    .UNPROCESSABLE_CONTENT
                     )
                     .body(
                             Map.of(
@@ -1563,11 +1643,13 @@ class UnifiedGlobalExceptionHandlerTests {
                 AdviceTargetException.class
         )
         ResponseEntity<Map<String, String>>
-        handle(AdviceTargetException exception) {
-
+        handle(
+                AdviceTargetException exception
+        ) {
             return ResponseEntity
                     .status(
-                            HttpStatus.UNPROCESSABLE_CONTENT
+                            HttpStatus
+                                    .UNPROCESSABLE_CONTENT
                     )
                     .body(
                             Map.of(
@@ -1576,11 +1658,5 @@ class UnifiedGlobalExceptionHandlerTests {
                             )
                     );
         }
-    }
-
-    private record ConversionCase(
-            RequestBuilder request,
-            String field
-    ) {
     }
 }

@@ -2,6 +2,8 @@ package ru.oreoman4ik.catchup.client;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.converter.HttpMessageConversionException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
@@ -21,15 +23,10 @@ import java.net.http.HttpTimeoutException;
 import java.time.Instant;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Преобразует ошибки исходящих HTTP-запросов
- * в UnifiedErrorException.
- */
 @Component
 public final class OutgoingHttpExceptionMapper {
 
-    private static final int ABSOLUTE_MAX_CHAIN_SIZE =
-            100;
+    private static final int ABSOLUTE_MAX_CHAIN_SIZE = 100;
 
     private final String currentService;
     private final int maxChainSize;
@@ -48,12 +45,8 @@ public final class OutgoingHttpExceptionMapper {
                 validateMaxChainSize(maxChainSize);
     }
 
-    /**
-     * Использует spring.application.name
-     * как название вызывающего сервиса.
-     */
     public UnifiedErrorException map(
-            Throwable cause,
+            Exception cause,
             String component,
             String operation
     ) {
@@ -66,16 +59,8 @@ public final class OutgoingHttpExceptionMapper {
         );
     }
 
-    /**
-     * Преобразует ошибку HTTP-клиента в общий тип
-     * библиотеки и добавляет контекст вызова.
-     *
-     * <p>publicMessage является только публичным
-     * сообщением. Технический Throwable остаётся
-     * неизменным.</p>
-     */
     public UnifiedErrorException map(
-            Throwable cause,
+            Exception cause,
             String service,
             String component,
             String operation,
@@ -87,10 +72,6 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Если ошибка уже структурирована,
-         * не создаём новый errorId.
-         */
         if (cause
                 instanceof UnifiedErrorException existing) {
 
@@ -109,8 +90,7 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        Mapping mapping =
-                classify(cause);
+        Mapping mapping = classify(cause);
 
         String responseMessage =
                 publicMessageOrDefault(
@@ -128,10 +108,6 @@ public final class OutgoingHttpExceptionMapper {
                         responseMessage
                 );
 
-        /*
-         * UnifiedErrorException.from создаёт errorId
-         * и сохраняет cause как originalCause.
-         */
         return UnifiedErrorException.from(
                 cause,
                 Instant.now(),
@@ -144,25 +120,9 @@ public final class OutgoingHttpExceptionMapper {
         );
     }
 
-    /**
-     * Восстанавливает поддерживаемый ErrorResponse
-     * удалённого сервиса.
-     *
-     * <p>Сохраняются:</p>
-     *
-     * <ul>
-     *     <li>errorId;</li>
-     *     <li>исходный timestamp;</li>
-     *     <li>status;</li>
-     *     <li>errorCode;</li>
-     *     <li>message;</li>
-     *     <li>details;</li>
-     *     <li>удалённая chain.</li>
-     * </ul>
-     */
     public UnifiedErrorException restore(
             ErrorResponse response,
-            Throwable cause,
+            Exception cause,
             String component,
             String operation
     ) {
@@ -178,7 +138,7 @@ public final class OutgoingHttpExceptionMapper {
 
     public UnifiedErrorException restore(
             ErrorResponse response,
-            Throwable cause,
+            Exception cause,
             String service,
             String component,
             String operation,
@@ -224,10 +184,10 @@ public final class OutgoingHttpExceptionMapper {
     }
 
     private static Mapping classify(
-            Throwable cause
+            Exception cause
     ) {
         /*
-         * Реальный HTTP-ответ.
+         * Удалённый сервер действительно прислал HTTP-ответ.
          */
         if (cause
                 instanceof
@@ -241,7 +201,8 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Timeout.
+         * Timeout имеет приоритет над общей сетевой
+         * классификацией.
          */
         if (hasCause(
                 cause,
@@ -265,8 +226,8 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Не удалось установить соединение:
-         * connection refused, DNS, route.
+         * Соединение с удалённым сервисом
+         * установить не удалось.
          */
         if (hasCause(
                 cause,
@@ -289,15 +250,29 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Не удалось преобразовать тело ответа.
+         * Ошибка сериализации ИСХОДЯЩЕГО request body.
+         *
+         * Это локальная проблема вызывающего приложения.
+         * Удалённый сервис мог вообще не получить запрос,
+         * поэтому здесь не используется REMOTE_* код.
          */
-        if (cause
-                instanceof UnknownContentTypeException
-                || hasCause(
+        if (hasCause(
                 cause,
-                HttpMessageConversionException.class
+                HttpMessageNotWritableException.class
         )) {
+            return new Mapping(
+                    500,
+                    "OUTGOING_REQUEST_BODY_ERROR",
+                    "Не удалось сформировать "
+                            + "исходящий запрос"
+            );
+        }
 
+        /*
+         * Ответ получен, но для него нет подходящего
+         * HttpMessageConverter.
+         */
+        if (cause instanceof UnknownContentTypeException) {
             return new Mapping(
                     502,
                     "REMOTE_BODY_CONVERSION_ERROR",
@@ -307,8 +282,42 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Соединение было установлено,
-         * но ответ оборвался при чтении.
+         * HttpMessageConverter не смог прочитать /
+         * десериализовать RESPONSE body.
+         */
+        if (hasCause(
+                cause,
+                HttpMessageNotReadableException.class
+        )) {
+            return new Mapping(
+                    502,
+                    "REMOTE_BODY_CONVERSION_ERROR",
+                    "Не удалось преобразовать ответ "
+                            + "удалённого сервиса"
+            );
+        }
+
+        /*
+         * Базовый HttpMessageConversionException сам по себе
+         * не сообщает направление операции.
+         *
+         * Нельзя утверждать, что ошибка произошла именно
+         * при чтении response body.
+         */
+        if (hasCause(
+                cause,
+                HttpMessageConversionException.class
+        )) {
+            return new Mapping(
+                    500,
+                    "OUTGOING_HTTP_CONVERSION_ERROR",
+                    "Не удалось преобразовать данные "
+                            + "исходящего HTTP-вызова"
+            );
+        }
+
+        /*
+         * Ответ начал читаться, но поток оборвался.
          */
         if (hasCause(
                 cause,
@@ -323,10 +332,12 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Остальные сетевые/I/O ошибки.
+         * Прочая I/O ошибка после исключения
+         * connection/timeout случаев выше.
+         *
+         * Например Connection reset.
          */
-        if (cause
-                instanceof ResourceAccessException
+        if (cause instanceof ResourceAccessException
                 || hasCause(
                 cause,
                 IOException.class
@@ -341,23 +352,26 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Другие ошибки RestClient/RestTemplate,
-         * например ошибки декодирования ответа.
+         * У RestClientException недостаточно информации,
+         * чтобы честно утверждать, что проблема была именно
+         * в response body.
+         *
+         * Поэтому используем нейтральную категорию.
          */
         if (cause instanceof RestClientException) {
             return new Mapping(
                     502,
-                    "REMOTE_RESPONSE_READ_ERROR",
-                    "Не удалось прочитать ответ "
-                            + "удалённого сервиса"
+                    "OUTGOING_HTTP_ERROR",
+                    "Не удалось выполнить "
+                            + "исходящий HTTP-запрос"
             );
         }
 
         return new Mapping(
                 502,
-                "REMOTE_REQUEST_ERROR",
-                "Не удалось выполнить запрос "
-                        + "к удалённому сервису"
+                "OUTGOING_HTTP_ERROR",
+                "Не удалось выполнить "
+                        + "исходящий HTTP-запрос"
         );
     }
 
@@ -428,7 +442,6 @@ public final class OutgoingHttpExceptionMapper {
         Throwable current = throwable;
 
         while (current != null) {
-
             if (type.isInstance(current)) {
                 return true;
             }

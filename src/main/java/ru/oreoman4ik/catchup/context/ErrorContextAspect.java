@@ -17,16 +17,11 @@ import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 import java.lang.reflect.Method;
 import java.time.Instant;
 
-/**
- * Автоматически добавляет контекст метода, помеченного
- * ErrorContext, если выполнение метода завершилось исключением.
- */
 @Aspect
 @Component
 public final class ErrorContextAspect {
 
     private static final int ABSOLUTE_MAX_CHAIN_SIZE = 100;
-
     private static final int DEFAULT_STATUS = 500;
 
     private static final String DEFAULT_ERROR_CODE =
@@ -37,9 +32,7 @@ public final class ErrorContextAspect {
 
     private final String currentService;
     private final int maxChainSize;
-
-    private final OutgoingHttpExceptionMapper
-            httpExceptionMapper;
+    private final OutgoingHttpExceptionMapper httpExceptionMapper;
 
     public ErrorContextAspect(
             @Value("${spring.application.name:application}")
@@ -70,12 +63,15 @@ public final class ErrorContextAspect {
     ) throws Throwable {
 
         try {
-            /*
-             * Успешный метод выполняется совершенно обычно.
-             */
             return joinPoint.proceed();
 
-        } catch (Throwable cause) {
+        } catch (Exception cause) {
+            /*
+             * Ловим только Exception.
+             *
+             * Error: сюда не попадут и продолжат распространяться
+             * без создания ErrorResponse/UUID/ChainElement.
+             */
             throw enrich(
                     cause,
                     joinPoint,
@@ -85,7 +81,7 @@ public final class ErrorContextAspect {
     }
 
     private UnifiedErrorException enrich(
-            Throwable cause,
+            Exception cause,
             ProceedingJoinPoint joinPoint,
             ErrorContext annotation
     ) {
@@ -94,13 +90,6 @@ public final class ErrorContextAspect {
                 annotation
         );
 
-        /*
-         * Ошибка уже структурирована.
-         *
-         * Не создаём новый объект ошибки:
-         * сохраняются errorId, timestamp, исходная причина,
-         * details и вся существующая цепочка.
-         */
         if (cause
                 instanceof UnifiedErrorException existing) {
 
@@ -123,12 +112,14 @@ public final class ErrorContextAspect {
         }
 
         /*
-         * Ошибку исходящего HTTP-вызова передаём
-         * специализированному mapper из задачи 6.
+         * Единственный источник классификации
+         * исходящих HTTP-ошибок.
          */
-        if (cause instanceof RestClientException) {
+        if (cause
+                instanceof RestClientException httpException) {
+
             return httpExceptionMapper.map(
-                    cause,
+                    httpException,
                     context.service(),
                     context.component(),
                     context.operation(),
@@ -138,10 +129,6 @@ public final class ErrorContextAspect {
             );
         }
 
-        /*
-         * Бизнес-ошибка сохраняет status, errorCode
-         * и details.
-         */
         if (cause instanceof BusinessException business) {
 
             String publicMessage =
@@ -167,13 +154,6 @@ public final class ErrorContextAspect {
             );
         }
 
-        /*
-         * Обычное неизвестное исключение превращается
-         * в безопасную структурированную 500 ошибку.
-         *
-         * cause.getMessage() никогда не становится
-         * публичным сообщением.
-         */
         String publicMessage =
                 publicMessageOrDefault(
                         annotation.message(),
@@ -202,30 +182,23 @@ public final class ErrorContextAspect {
             ErrorContext annotation
     ) {
         MethodSignature signature =
-                (MethodSignature)
-                        joinPoint.getSignature();
+                (MethodSignature) joinPoint.getSignature();
 
         Method method =
                 AopUtils.getMostSpecificMethod(
                         signature.getMethod(),
-                        joinPoint
-                                .getTarget()
-                                .getClass()
+                        joinPoint.getTarget().getClass()
                 );
 
         String service =
                 annotation.service().isBlank()
                         ? currentService
-                        : annotation
-                        .service()
-                        .trim();
+                        : annotation.service().trim();
 
         String operation =
                 annotation.operation().isBlank()
                         ? method.getName()
-                        : annotation
-                        .operation()
-                        .trim();
+                        : annotation.operation().trim();
 
         Class<?> targetClass =
                 AopUtils.getTargetClass(
