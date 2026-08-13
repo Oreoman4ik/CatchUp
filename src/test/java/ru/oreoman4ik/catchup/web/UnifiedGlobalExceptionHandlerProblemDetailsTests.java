@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
 
 import static org.springframework.test.web.servlet.request
         .MockMvcRequestBuilders.post;
@@ -28,7 +29,10 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                     "spring.application.name=test-service"
             }
     )
-    @Import(UnifiedGlobalExceptionHandler.class)
+    @Import({
+            UnifiedGlobalExceptionHandler.class,
+            OutgoingHttpExceptionMapper.class
+    })
     class ProblemDetailsEnabled {
 
         @Autowired
