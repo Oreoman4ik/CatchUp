@@ -8,9 +8,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Типизированные дополнительные данные публичной ошибки.
- */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
 public final class ErrorDetails {
@@ -18,8 +15,12 @@ public final class ErrorDetails {
     private static final int MAX_VIOLATIONS = 100;
 
     private final String resource;
+
     private final List<FieldViolation> violations;
+
     private final Long retryAfterSeconds;
+
+    private final TechnicalDetails technical;
 
     @JsonCreator
     private ErrorDetails(
@@ -30,42 +31,54 @@ public final class ErrorDetails {
             List<FieldViolation> violations,
 
             @JsonProperty("retryAfterSeconds")
-            Long retryAfterSeconds
+            Long retryAfterSeconds,
+
+            @JsonProperty("technical")
+            TechnicalDetails technical
     ) {
         this.resource =
-                ErrorModelValidation.optionalPublicCode(
-                        "resource",
-                        resource
-                );
+                ErrorModelValidation
+                        .optionalPublicCode(
+                                "resource",
+                                resource
+                        );
 
         this.violations =
-                ErrorModelValidation.immutableOptionalList(
-                        "violations",
-                        violations,
-                        MAX_VIOLATIONS
-                );
+                ErrorModelValidation
+                        .immutableOptionalList(
+                                "violations",
+                                violations,
+                                MAX_VIOLATIONS
+                        );
 
         this.retryAfterSeconds =
-                ErrorModelValidation.nonNegativeLong(
-                        "retryAfterSeconds",
-                        retryAfterSeconds
-                );
+                ErrorModelValidation
+                        .nonNegativeLong(
+                                "retryAfterSeconds",
+                                retryAfterSeconds
+                        );
+
+        this.technical = technical;
 
         if (this.resource == null
                 && this.violations.isEmpty()
-                && this.retryAfterSeconds == null) {
+                && this.retryAfterSeconds == null
+                && this.technical == null) {
 
             throw new IllegalArgumentException(
-                    "details must contain at least one public value"
+                    "details must contain at least one value"
             );
         }
     }
 
-    private ErrorDetails(Builder builder) {
+    private ErrorDetails(
+            Builder builder
+    ) {
         this(
                 builder.resource,
                 builder.violations,
-                builder.retryAfterSeconds
+                builder.retryAfterSeconds,
+                builder.technical
         );
     }
 
@@ -88,21 +101,37 @@ public final class ErrorDetails {
         return retryAfterSeconds;
     }
 
+    @JsonProperty("technical")
+    public TechnicalDetails getTechnical() {
+        return technical;
+    }
+
     @Override
     public boolean equals(Object object) {
         if (this == object) {
             return true;
         }
 
-        if (!(object instanceof ErrorDetails that)) {
+        if (!(object
+                instanceof ErrorDetails that)) {
+
             return false;
         }
 
-        return Objects.equals(resource, that.resource)
-                && violations.equals(that.violations)
+        return Objects.equals(
+                resource,
+                that.resource
+        )
+                && violations.equals(
+                that.violations
+        )
                 && Objects.equals(
                 retryAfterSeconds,
                 that.retryAfterSeconds
+        )
+                && Objects.equals(
+                technical,
+                that.technical
         );
     }
 
@@ -111,29 +140,43 @@ public final class ErrorDetails {
         return Objects.hash(
                 resource,
                 violations,
-                retryAfterSeconds
+                retryAfterSeconds,
+                technical
         );
     }
 
     @Override
     public String toString() {
         return "ErrorDetails{"
-                + "resource='" + resource + '\''
-                + ", violations=" + violations
-                + ", retryAfterSeconds=" + retryAfterSeconds
+                + "resource='"
+                + resource
+                + '\''
+                + ", violations="
+                + violations
+                + ", retryAfterSeconds="
+                + retryAfterSeconds
+                + ", technical="
+                + technical
                 + '}';
     }
 
     public static final class Builder {
 
         private String resource;
-        private List<FieldViolation> violations = List.of();
+
+        private List<FieldViolation> violations =
+                List.of();
+
         private Long retryAfterSeconds;
+
+        private TechnicalDetails technical;
 
         private Builder() {
         }
 
-        public Builder resource(String resource) {
+        public Builder resource(
+                String resource
+        ) {
             this.resource = resource;
             return this;
         }
@@ -148,7 +191,16 @@ public final class ErrorDetails {
         public Builder retryAfterSeconds(
                 Long retryAfterSeconds
         ) {
-            this.retryAfterSeconds = retryAfterSeconds;
+            this.retryAfterSeconds =
+                    retryAfterSeconds;
+
+            return this;
+        }
+
+        public Builder technical(
+                TechnicalDetails technical
+        ) {
+            this.technical = technical;
             return this;
         }
 
@@ -162,12 +214,17 @@ public final class ErrorDetails {
     public static final class FieldViolation {
 
         private final String field;
+
         private final String reasonCode;
+
         private final String message;
 
         @JsonCreator
         private FieldViolation(
-                @JsonProperty(value = "field", required = true)
+                @JsonProperty(
+                        value = "field",
+                        required = true
+                )
                 String field,
 
                 @JsonProperty(
@@ -182,21 +239,27 @@ public final class ErrorDetails {
                 )
                 String message
         ) {
-            this.field = ErrorModelValidation.requiredText(
-                    "field",
-                    field,
-                    160
-            );
+            this.field =
+                    ErrorModelValidation
+                            .requiredText(
+                                    "field",
+                                    field,
+                                    160
+                            );
 
-            this.reasonCode = ErrorModelValidation.publicCode(
-                    "reasonCode",
-                    reasonCode
-            );
+            this.reasonCode =
+                    ErrorModelValidation
+                            .publicCode(
+                                    "reasonCode",
+                                    reasonCode
+                            );
 
-            this.message = ErrorModelValidation.publicMessage(
-                    "message",
-                    message
-            );
+            this.message =
+                    ErrorModelValidation
+                            .publicMessage(
+                                    "message",
+                                    message
+                            );
         }
 
         public static FieldViolation of(
@@ -227,18 +290,27 @@ public final class ErrorDetails {
         }
 
         @Override
-        public boolean equals(Object object) {
+        public boolean equals(
+                Object object
+        ) {
             if (this == object) {
                 return true;
             }
 
-            if (!(object instanceof FieldViolation that)) {
+            if (!(object
+                    instanceof
+                    FieldViolation that)) {
+
                 return false;
             }
 
             return field.equals(that.field)
-                    && reasonCode.equals(that.reasonCode)
-                    && message.equals(that.message);
+                    && reasonCode.equals(
+                    that.reasonCode
+            )
+                    && message.equals(
+                    that.message
+            );
         }
 
         @Override
@@ -253,9 +325,15 @@ public final class ErrorDetails {
         @Override
         public String toString() {
             return "FieldViolation{"
-                    + "field='" + field + '\''
-                    + ", reasonCode='" + reasonCode + '\''
-                    + ", message='" + message + '\''
+                    + "field='"
+                    + field
+                    + '\''
+                    + ", reasonCode='"
+                    + reasonCode
+                    + '\''
+                    + ", message='"
+                    + message
+                    + '\''
                     + '}';
         }
     }

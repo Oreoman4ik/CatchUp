@@ -1,17 +1,20 @@
 package ru.oreoman4ik.catchup.client;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.converter.HttpMessageNotWritableException;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.UnknownContentTypeException;
+import ru.oreoman4ik.catchup.config.CurrentServiceName;
+import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.ChainElement;
+import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -21,28 +24,100 @@ import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.http.HttpTimeoutException;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 
-@Component
 public final class OutgoingHttpExceptionMapper {
 
-    private static final int ABSOLUTE_MAX_CHAIN_SIZE = 100;
-
     private final String currentService;
+
     private final int maxChainSize;
 
-    public OutgoingHttpExceptionMapper(
-            @Value("${spring.application.name:application}")
-            String currentService,
+    private final RemoteErrorResponseDecoder
+            remoteErrorResponseDecoder;
 
-            @Value("${catchup.errors.max-chain-size:10}")
-            int maxChainSize
+    private final TechnicalDetailsFactory
+            technicalDetailsFactory;
+
+    public OutgoingHttpExceptionMapper(
+            CurrentServiceName currentService,
+            UnifiedErrorProperties properties,
+            RemoteErrorResponseDecoder
+                    remoteErrorResponseDecoder,
+            TechnicalDetailsFactory
+                    technicalDetailsFactory
     ) {
+        if (currentService == null) {
+            throw new IllegalArgumentException(
+                    "currentService is required"
+            );
+        }
+
+        if (properties == null) {
+            throw new IllegalArgumentException(
+                    "properties is required"
+            );
+        }
+
+        if (remoteErrorResponseDecoder == null) {
+            throw new IllegalArgumentException(
+                    "remoteErrorResponseDecoder "
+                            + "is required"
+            );
+        }
+
+        if (technicalDetailsFactory == null) {
+            throw new IllegalArgumentException(
+                    "technicalDetailsFactory is required"
+            );
+        }
+
         this.currentService =
-                validateServiceName(currentService);
+                currentService.value();
 
         this.maxChainSize =
-                validateMaxChainSize(maxChainSize);
+                properties.getMaxChainSize();
+
+        this.remoteErrorResponseDecoder =
+                remoteErrorResponseDecoder;
+
+        this.technicalDetailsFactory =
+                technicalDetailsFactory;
+    }
+
+    /*
+     * Оставляем старый constructor, чтобы текущие
+     * unit-тесты и ручное создание mapper продолжили
+     * работать.
+     */
+    public OutgoingHttpExceptionMapper(
+            String currentService,
+            int maxChainSize
+    ) {
+        UnifiedErrorProperties properties =
+                defaultProperties(
+                        maxChainSize
+                );
+
+        this.currentService =
+                CurrentServiceName
+                        .of(currentService)
+                        .value();
+
+        this.maxChainSize =
+                properties.getMaxChainSize();
+
+        this.remoteErrorResponseDecoder =
+                new RemoteErrorResponseDecoder(
+                        JsonMapper
+                                .builder()
+                                .build()
+                );
+
+        this.technicalDetailsFactory =
+                new TechnicalDetailsFactory(
+                        properties
+                );
     }
 
     public UnifiedErrorException map(
@@ -73,7 +148,8 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         if (cause
-                instanceof UnifiedErrorException existing) {
+                instanceof
+                UnifiedErrorException existing) {
 
             return existing.addContext(
                     context(
@@ -90,7 +166,40 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        Mapping mapping = classify(cause);
+        /*
+         * Сначала пробуем восстановить
+         * ErrorResponse другого сервиса.
+         */
+        if (cause
+                instanceof
+                RestClientResponseException
+                        responseException) {
+
+            Optional<ErrorResponse> decoded =
+                    remoteErrorResponseDecoder
+                            .decode(
+                                    responseException
+                            );
+
+            if (decoded.isPresent()) {
+                return restore(
+                        decoded.get(),
+                        responseException,
+                        service,
+                        component,
+                        operation,
+                        publicMessage
+                );
+            }
+        }
+
+        /*
+         * Неизвестный/повреждённый remote body
+         * попадает в обычную классификацию и
+         * получает новый errorId.
+         */
+        Mapping mapping =
+                classify(cause);
 
         String responseMessage =
                 publicMessageOrDefault(
@@ -98,14 +207,10 @@ public final class OutgoingHttpExceptionMapper {
                         mapping.message()
                 );
 
-        ChainElement context =
-                context(
-                        service,
-                        component,
-                        operation,
-                        mapping.status(),
-                        mapping.errorCode(),
-                        responseMessage
+        ErrorDetails details =
+                technicalDetailsFactory.enrich(
+                        null,
+                        cause
                 );
 
         return UnifiedErrorException.from(
@@ -114,8 +219,15 @@ public final class OutgoingHttpExceptionMapper {
                 mapping.status(),
                 mapping.errorCode(),
                 responseMessage,
-                null,
-                context,
+                details,
+                context(
+                        service,
+                        component,
+                        operation,
+                        mapping.status(),
+                        mapping.errorCode(),
+                        responseMessage
+                ),
                 maxChainSize
         );
     }
@@ -156,14 +268,55 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        UnifiedErrorException restored =
-                UnifiedErrorException.fromResponse(
-                        response,
-                        cause,
-                        maxChainSize
+        /*
+         * Публичные remote details сохраняются.
+         *
+         * Remote technical details не проксируются.
+         * Если технические details разрешены локально,
+         * добавляются данные локального HTTP exception.
+         */
+        ErrorDetails details =
+                technicalDetailsFactory.enrich(
+                        response.getDetails(),
+                        cause
                 );
 
-        Mapping localMapping =
+        ErrorResponse sanitizedResponse =
+                ErrorResponse.builder()
+                        .errorId(
+                                response.getErrorId()
+                        )
+                        .timestamp(
+                                response.getTimestamp()
+                        )
+                        .status(
+                                response.getStatus()
+                        )
+                        .message(
+                                response.getMessage()
+                        )
+                        .errorCode(
+                                response.getErrorCode()
+                        )
+                        .currentService(
+                                response
+                                        .getCurrentService()
+                        )
+                        .chain(
+                                response.getChain()
+                        )
+                        .details(details)
+                        .build();
+
+        UnifiedErrorException restored =
+                UnifiedErrorException
+                        .fromResponse(
+                                sanitizedResponse,
+                                cause,
+                                maxChainSize
+                        );
+
+        Mapping callerMapping =
                 mappingForStatus(
                         response.getStatus()
                 );
@@ -174,10 +327,10 @@ public final class OutgoingHttpExceptionMapper {
                         component,
                         operation,
                         response.getStatus(),
-                        localMapping.errorCode(),
+                        callerMapping.errorCode(),
                         publicMessageOrDefault(
                                 publicMessage,
-                                localMapping.message()
+                                callerMapping.message()
                         )
                 )
         );
@@ -186,9 +339,6 @@ public final class OutgoingHttpExceptionMapper {
     private static Mapping classify(
             Exception cause
     ) {
-        /*
-         * Удалённый сервер действительно прислал HTTP-ответ.
-         */
         if (cause
                 instanceof
                 RestClientResponseException response) {
@@ -200,10 +350,6 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Timeout имеет приоритет над общей сетевой
-         * классификацией.
-         */
         if (hasCause(
                 cause,
                 SocketTimeoutException.class
@@ -225,10 +371,6 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Соединение с удалённым сервисом
-         * установить не удалось.
-         */
         if (hasCause(
                 cause,
                 ConnectException.class
@@ -249,17 +391,11 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Ошибка сериализации ИСХОДЯЩЕГО request body.
-         *
-         * Это локальная проблема вызывающего приложения.
-         * Удалённый сервис мог вообще не получить запрос,
-         * поэтому здесь не используется REMOTE_* код.
-         */
         if (hasCause(
                 cause,
                 HttpMessageNotWritableException.class
         )) {
+
             return new Mapping(
                     500,
                     "OUTGOING_REQUEST_BODY_ERROR",
@@ -268,27 +404,13 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Ответ получен, но для него нет подходящего
-         * HttpMessageConverter.
-         */
-        if (cause instanceof UnknownContentTypeException) {
-            return new Mapping(
-                    502,
-                    "REMOTE_BODY_CONVERSION_ERROR",
-                    "Не удалось преобразовать ответ "
-                            + "удалённого сервиса"
-            );
-        }
-
-        /*
-         * HttpMessageConverter не смог прочитать /
-         * десериализовать RESPONSE body.
-         */
-        if (hasCause(
+        if (cause
+                instanceof UnknownContentTypeException
+                || hasCause(
                 cause,
                 HttpMessageNotReadableException.class
         )) {
+
             return new Mapping(
                     502,
                     "REMOTE_BODY_CONVERSION_ERROR",
@@ -297,17 +419,11 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Базовый HttpMessageConversionException сам по себе
-         * не сообщает направление операции.
-         *
-         * Нельзя утверждать, что ошибка произошла именно
-         * при чтении response body.
-         */
         if (hasCause(
                 cause,
                 HttpMessageConversionException.class
         )) {
+
             return new Mapping(
                     500,
                     "OUTGOING_HTTP_CONVERSION_ERROR",
@@ -316,13 +432,11 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Ответ начал читаться, но поток оборвался.
-         */
         if (hasCause(
                 cause,
                 EOFException.class
         )) {
+
             return new Mapping(
                     502,
                     "REMOTE_RESPONSE_READ_ERROR",
@@ -331,13 +445,8 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * Прочая I/O ошибка после исключения
-         * connection/timeout случаев выше.
-         *
-         * Например Connection reset.
-         */
-        if (cause instanceof ResourceAccessException
+        if (cause
+                instanceof ResourceAccessException
                 || hasCause(
                 cause,
                 IOException.class
@@ -351,14 +460,9 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        /*
-         * У RestClientException недостаточно информации,
-         * чтобы честно утверждать, что проблема была именно
-         * в response body.
-         *
-         * Поэтому используем нейтральную категорию.
-         */
-        if (cause instanceof RestClientException) {
+        if (cause
+                instanceof RestClientException) {
+
             return new Mapping(
                     502,
                     "OUTGOING_HTTP_ERROR",
@@ -378,7 +482,9 @@ public final class OutgoingHttpExceptionMapper {
     private static Mapping mappingForStatus(
             int status
     ) {
-        if (status >= 400 && status < 500) {
+        if (status >= 400
+                && status < 500) {
+
             return new Mapping(
                     status,
                     "REMOTE_CLIENT_ERROR",
@@ -386,12 +492,14 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
-        if (status >= 500 && status <= 599) {
+        if (status >= 500
+                && status <= 599) {
+
             return new Mapping(
                     status,
                     "REMOTE_SERVER_ERROR",
-                    "Удалённый сервис завершил запрос "
-                            + "с ошибкой"
+                    "Удалённый сервис завершил "
+                            + "запрос с ошибкой"
             );
         }
 
@@ -422,7 +530,8 @@ public final class OutgoingHttpExceptionMapper {
                 .build();
     }
 
-    private static String publicMessageOrDefault(
+    private static String
+    publicMessageOrDefault(
             String publicMessage,
             String defaultMessage
     ) {
@@ -452,48 +561,18 @@ public final class OutgoingHttpExceptionMapper {
         return false;
     }
 
-    private static String validateServiceName(
-            String value
+    private static UnifiedErrorProperties
+    defaultProperties(
+            int maxChainSize
     ) {
-        String normalized =
-                value == null || value.isBlank()
-                        ? "application"
-                        : value.trim();
+        UnifiedErrorProperties properties =
+                new UnifiedErrorProperties();
 
-        if (normalized.length() > 120) {
-            throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "exceed 120 characters"
-            );
-        }
+        properties.setMaxChainSize(
+                maxChainSize
+        );
 
-        if (normalized.indexOf('\r') >= 0
-                || normalized.indexOf('\n') >= 0
-                || normalized.indexOf('\t') >= 0) {
-
-            throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "contain control characters"
-            );
-        }
-
-        return normalized;
-    }
-
-    private static int validateMaxChainSize(
-            int value
-    ) {
-        if (value < 1
-                || value > ABSOLUTE_MAX_CHAIN_SIZE) {
-
-            throw new IllegalArgumentException(
-                    "catchup.errors.max-chain-size "
-                            + "must be from 1 to "
-                            + ABSOLUTE_MAX_CHAIN_SIZE
-            );
-        }
-
-        return value;
+        return properties;
     }
 
     private record Mapping(

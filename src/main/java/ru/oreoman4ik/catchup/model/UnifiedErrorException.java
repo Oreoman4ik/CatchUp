@@ -4,21 +4,19 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Базовое исключение библиотеки для передачи одной логической
- * структурированной ошибки между уровнями приложения.
- *
- * <p>Идентификатор, время возникновения, код ошибки, details и
- * исходная причина не меняются при добавлении контекста.</p>
- */
 public final class UnifiedErrorException
         extends RuntimeException {
 
     private final UUID errorId;
+
     private final Instant timestamp;
+
     private final int status;
+
     private final String errorCode;
+
     private final ErrorDetails details;
+
     private final Throwable originalCause;
 
     private volatile ExceptionChain chain;
@@ -34,50 +32,54 @@ public final class UnifiedErrorException
             ExceptionChain chain
     ) {
         super(
-                ErrorModelValidation.publicMessage(
-                        "message",
-                        message
-                ),
+                ErrorModelValidation
+                        .publicMessage(
+                                "message",
+                                message
+                        ),
+                ErrorModelValidation
+                        .required(
+                                "originalCause",
+                                originalCause
+                        )
+        );
+
+        this.errorId =
                 ErrorModelValidation.required(
-                        "originalCause",
-                        originalCause
-                )
-        );
+                        "errorId",
+                        errorId
+                );
 
-        this.errorId = ErrorModelValidation.required(
-                "errorId",
-                errorId
-        );
+        this.timestamp =
+                ErrorModelValidation.required(
+                        "timestamp",
+                        timestamp
+                );
 
-        this.timestamp = ErrorModelValidation.required(
-                "timestamp",
-                timestamp
-        );
+        this.status =
+                ErrorModelValidation.httpStatus(
+                        "status",
+                        status
+                );
 
-        this.status = ErrorModelValidation.httpStatus(
-                "status",
-                status
-        );
-
-        this.errorCode = ErrorModelValidation.publicCode(
-                "errorCode",
-                errorCode
-        );
+        this.errorCode =
+                ErrorModelValidation.publicCode(
+                        "errorCode",
+                        errorCode
+                );
 
         this.details = details;
-        this.originalCause = originalCause;
 
-        this.chain = ErrorModelValidation.required(
-                "chain",
-                chain
-        );
+        this.originalCause =
+                originalCause;
+
+        this.chain =
+                ErrorModelValidation.required(
+                        "chain",
+                        chain
+                );
     }
 
-    /**
-     * Создаёт исключение из обычной причины.
-     *
-     * <p>Время фиксируется в момент вызова метода.</p>
-     */
     public static UnifiedErrorException from(
             Throwable cause,
             int status,
@@ -96,13 +98,6 @@ public final class UnifiedErrorException
         );
     }
 
-    /**
-     * Создаёт исключение с полным набором структурированных
-     * данных.
-     *
-     * <p>Перегрузка с явным timestamp нужна, когда точное время
-     * возникновения ошибки уже известно.</p>
-     */
     public static UnifiedErrorException from(
             Throwable cause,
             Instant timestamp,
@@ -118,7 +113,8 @@ public final class UnifiedErrorException
         );
 
         if (cause
-                instanceof UnifiedErrorException existing) {
+                instanceof
+                UnifiedErrorException existing) {
 
             return existing;
         }
@@ -131,13 +127,12 @@ public final class UnifiedErrorException
                 message,
                 details,
                 cause,
-                ExceptionChain.empty(maxChainSize)
+                ExceptionChain.empty(
+                        maxChainSize
+                )
         );
     }
 
-    /**
-     * Создаёт исключение и сразу добавляет первый контекст.
-     */
     public static UnifiedErrorException from(
             Throwable cause,
             int status,
@@ -152,12 +147,11 @@ public final class UnifiedErrorException
                 errorCode,
                 message,
                 maxChainSize
-        ).addContext(initialContext);
+        ).addContext(
+                initialContext
+        );
     }
 
-    /**
-     * Создаёт исключение с полными данными и первым контекстом.
-     */
     public static UnifiedErrorException from(
             Throwable cause,
             Instant timestamp,
@@ -176,15 +170,11 @@ public final class UnifiedErrorException
                 message,
                 details,
                 maxChainSize
-        ).addContext(initialContext);
+        ).addContext(
+                initialContext
+        );
     }
 
-    /**
-     * Восстанавливает ошибку из ответа другого сервиса.
-     *
-     * <p>Сохраняются errorId, timestamp, status, message,
-     * errorCode, details и существующая цепочка.</p>
-     */
     public static UnifiedErrorException fromResponse(
             ErrorResponse response,
             Throwable cause,
@@ -200,18 +190,34 @@ public final class UnifiedErrorException
                 cause
         );
 
-        // Проверяет корректность локального лимита.
+        /*
+         * Заодно проверяет корректность
+         * локального maxChainSize.
+         */
         ExceptionChain.empty(maxChainSize);
 
         /*
-         * Если удалённая цепочка уже превышает локальный лимит,
-         * существующие элементы не удаляются. Дальнейшее
-         * увеличение будет заблокировано.
+         * Уже полученная межсервисная цепочка
+         * не обрезается.
+         *
+         * Если возможно, резервируем одно
+         * дополнительное место для контекста
+         * вызывающего сервиса.
          */
-        int effectiveMaxSize = Math.max(
-                maxChainSize,
-                response.getChain().size()
-        );
+        int requiredSizeForCallerContext =
+                Math.min(
+                        100,
+                        response
+                                .getChain()
+                                .size()
+                                + 1
+                );
+
+        int effectiveMaxSize =
+                Math.max(
+                        maxChainSize,
+                        requiredSizeForCallerContext
+                );
 
         ExceptionChain restoredChain =
                 ExceptionChain.of(
@@ -231,27 +237,23 @@ public final class UnifiedErrorException
         );
     }
 
-    /**
-     * Добавляет контекст к тому же экземпляру исключения.
-     */
-    public synchronized UnifiedErrorException addContext(
+    public synchronized
+    UnifiedErrorException addContext(
             ChainElement context
     ) {
         chain = chain.add(context);
+
         return this;
     }
 
-    /**
-     * Преобразует исключение обратно в публичный ответ.
-     *
-     * <p>Перед преобразованием должен быть добавлен хотя бы один
-     * элемент цепочки.</p>
-     */
-    public ErrorResponse toResponse(String currentService) {
+    public ErrorResponse toResponse(
+            String currentService
+    ) {
         if (chain.isEmpty()) {
             throw new IllegalStateException(
-                    "chain must contain at least one element "
-                            + "before creating ErrorResponse"
+                    "chain must contain at least one "
+                            + "element before creating "
+                            + "ErrorResponse"
             );
         }
 
@@ -261,8 +263,12 @@ public final class UnifiedErrorException
                 .status(status)
                 .message(getMessage())
                 .errorCode(errorCode)
-                .currentService(currentService)
-                .chain(chain.getElements())
+                .currentService(
+                        currentService
+                )
+                .chain(
+                        chain.getElements()
+                )
                 .details(details)
                 .build();
     }
@@ -287,9 +293,6 @@ public final class UnifiedErrorException
         return details;
     }
 
-    /**
-     * Возвращает исходную техническую причину ошибки.
-     */
     public Throwable getOriginalCause() {
         return originalCause;
     }
@@ -298,7 +301,8 @@ public final class UnifiedErrorException
         return chain;
     }
 
-    public List<ChainElement> getChainElements() {
+    public List<ChainElement>
+    getChainElements() {
         return chain.getElements();
     }
 

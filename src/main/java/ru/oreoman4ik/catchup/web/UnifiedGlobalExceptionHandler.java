@@ -4,7 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.beans.TypeMismatchException;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.MessageSourceResolvable;
 import org.springframework.core.MethodParameter;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -30,6 +30,9 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
+import ru.oreoman4ik.catchup.config.CurrentServiceName;
+import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.BusinessException;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
@@ -41,61 +44,145 @@ import java.util.ArrayList;
 import java.util.List;
 
 @RestControllerAdvice
-@Order(UnifiedGlobalExceptionHandler.HANDLER_ORDER)
+@Order(
+        UnifiedGlobalExceptionHandler
+                .HANDLER_ORDER
+)
+@ConditionalOnProperty(
+        prefix = "catchup.errors",
+        name = "enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public final class UnifiedGlobalExceptionHandler
         extends ResponseEntityExceptionHandler {
 
     public static final int HANDLER_ORDER = -1;
 
-    private static final int ABSOLUTE_MAX_CHAIN_SIZE = 100;
-    private static final int MAX_VALIDATION_ERRORS = 100;
+    private static final int
+            MAX_VALIDATION_ERRORS = 100;
 
-    private static final String INTERNAL_ERROR_CODE =
+    private static final String
+            INTERNAL_ERROR_CODE =
             "INTERNAL_ERROR";
 
-    private static final String INTERNAL_ERROR_MESSAGE =
+    private static final String
+            DEFAULT_UNKNOWN_ERROR_MESSAGE =
             "Внутренняя ошибка сервиса";
 
     private final String currentService;
+
     private final int maxChainSize;
+
+    private final String unknownErrorMessage;
 
     private final OutgoingHttpExceptionMapper
             outgoingHttpExceptionMapper;
 
+    private final TechnicalDetailsFactory
+            technicalDetailsFactory;
+
     public UnifiedGlobalExceptionHandler(
-            @Value("${spring.application.name:application}")
+            CurrentServiceName currentService,
+            UnifiedErrorProperties properties,
+            OutgoingHttpExceptionMapper
+                    outgoingHttpExceptionMapper,
+            TechnicalDetailsFactory
+                    technicalDetailsFactory
+    ) {
+        if (currentService == null) {
+            throw new IllegalArgumentException(
+                    "currentService is required"
+            );
+        }
+
+        if (properties == null) {
+            throw new IllegalArgumentException(
+                    "properties is required"
+            );
+        }
+
+        if (outgoingHttpExceptionMapper == null) {
+            throw new IllegalArgumentException(
+                    "outgoingHttpExceptionMapper "
+                            + "is required"
+            );
+        }
+
+        if (technicalDetailsFactory == null) {
+            throw new IllegalArgumentException(
+                    "technicalDetailsFactory "
+                            + "is required"
+            );
+        }
+
+        this.currentService =
+                currentService.value();
+
+        this.maxChainSize =
+                properties.getMaxChainSize();
+
+        this.unknownErrorMessage =
+                properties
+                        .getUnknownErrorMessage();
+
+        this.outgoingHttpExceptionMapper =
+                outgoingHttpExceptionMapper;
+
+        this.technicalDetailsFactory =
+                technicalDetailsFactory;
+    }
+
+    /*
+     * Совместимость с существующими unit-тестами.
+     */
+    public UnifiedGlobalExceptionHandler(
             String currentService,
-
-            @Value("${catchup.errors.max-chain-size:10}")
             int maxChainSize,
-
             OutgoingHttpExceptionMapper
                     outgoingHttpExceptionMapper
     ) {
         this.currentService =
-                validateServiceName(currentService);
+                validateServiceName(
+                        currentService
+                );
 
         this.maxChainSize =
-                validateMaxChainSize(maxChainSize);
+                validateMaxChainSize(
+                        maxChainSize
+                );
+
+        this.unknownErrorMessage =
+                DEFAULT_UNKNOWN_ERROR_MESSAGE;
 
         if (outgoingHttpExceptionMapper == null) {
             throw new IllegalArgumentException(
-                    "outgoingHttpExceptionMapper is required"
+                    "outgoingHttpExceptionMapper "
+                            + "is required"
             );
         }
 
         this.outgoingHttpExceptionMapper =
                 outgoingHttpExceptionMapper;
+
+        UnifiedErrorProperties properties =
+                new UnifiedErrorProperties();
+
+        properties.setMaxChainSize(
+                maxChainSize
+        );
+
+        this.technicalDetailsFactory =
+                new TechnicalDetailsFactory(
+                        properties
+                );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Library exceptions
-     * ------------------------------------------------------------
-     */
-
-    @ExceptionHandler(UnifiedErrorException.class)
-    public ResponseEntity<ErrorResponse> handleUnifiedError(
+    @ExceptionHandler(
+            UnifiedErrorException.class
+    )
+    public ResponseEntity<ErrorResponse>
+    handleUnifiedError(
             UnifiedErrorException exception,
             HttpServletRequest request
     ) {
@@ -115,8 +202,11 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<ErrorResponse> handleBusinessError(
+    @ExceptionHandler(
+            BusinessException.class
+    )
+    public ResponseEntity<ErrorResponse>
+    handleBusinessError(
             BusinessException exception,
             HttpServletRequest request
     ) {
@@ -131,22 +221,22 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Validation
-     * ------------------------------------------------------------
-     */
-
-    @ExceptionHandler(ConstraintViolationException.class)
+    @ExceptionHandler(
+            ConstraintViolationException.class
+    )
     public ResponseEntity<ErrorResponse>
     handleConstraintValidation(
             ConstraintViolationException exception,
             HttpServletRequest request
     ) {
-        List<ErrorDetails.FieldViolation> violations =
-                exception.getConstraintViolations()
+        List<ErrorDetails.FieldViolation>
+                violations =
+                exception
+                        .getConstraintViolations()
                         .stream()
-                        .limit(MAX_VALIDATION_ERRORS)
+                        .limit(
+                                MAX_VALIDATION_ERRORS
+                        )
                         .map(
                                 UnifiedGlobalExceptionHandler
                                         ::toFieldViolation
@@ -158,26 +248,25 @@ public final class UnifiedGlobalExceptionHandler
                 400,
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
-                validationDetails(violations),
+                validationDetails(
+                        violations
+                ),
                 HttpHeaders.EMPTY,
                 request
         );
     }
 
     /*
-     * ------------------------------------------------------------
-     * Outgoing HTTP
-     * ------------------------------------------------------------
-     */
-
-    /**
-     * Вся классификация исходящих HTTP-ошибок выполняется
-     * исключительно OutgoingHttpExceptionMapper.
+     * Единственный источник классификации
+     * исходящих HTTP-ошибок —
+     * OutgoingHttpExceptionMapper.
      *
-     * <p>Global handler не содержит собственной таблицы
-     * REMOTE_* / OUTGOING_* ошибок.</p>
+     * Он же пытается восстановить ErrorResponse
+     * другого микросервиса.
      */
-    @ExceptionHandler(RestClientException.class)
+    @ExceptionHandler(
+            RestClientException.class
+    )
     public ResponseEntity<ErrorResponse>
     handleOutgoingHttpError(
             RestClientException exception,
@@ -201,12 +290,6 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Standard Spring MVC exceptions
-     * ------------------------------------------------------------
-     */
-
     @Override
     protected ResponseEntity<Object>
     handleHttpMessageNotReadable(
@@ -219,7 +302,8 @@ public final class UnifiedGlobalExceptionHandler
                 exception,
                 400,
                 "INVALID_REQUEST_BODY",
-                "Тело запроса имеет некорректный формат",
+                "Тело запроса имеет "
+                        + "некорректный формат",
                 null,
                 headers,
                 servletRequest(request)
@@ -227,7 +311,8 @@ public final class UnifiedGlobalExceptionHandler
     }
 
     @Override
-    protected ResponseEntity<Object> handleTypeMismatch(
+    protected ResponseEntity<Object>
+    handleTypeMismatch(
             TypeMismatchException exception,
             HttpHeaders headers,
             HttpStatusCode status,
@@ -237,8 +322,11 @@ public final class UnifiedGlobalExceptionHandler
                 exception,
                 400,
                 "INVALID_PARAMETER",
-                "Параметр запроса имеет некорректный формат",
-                typeMismatchDetails(exception),
+                "Параметр запроса имеет "
+                        + "некорректный формат",
+                typeMismatchDetails(
+                        exception
+                ),
                 headers,
                 servletRequest(request)
         );
@@ -252,11 +340,15 @@ public final class UnifiedGlobalExceptionHandler
             HttpStatusCode status,
             WebRequest request
     ) {
-        List<ErrorDetails.FieldViolation> violations =
-                exception.getBindingResult()
+        List<ErrorDetails.FieldViolation>
+                violations =
+                exception
+                        .getBindingResult()
                         .getAllErrors()
                         .stream()
-                        .limit(MAX_VALIDATION_ERRORS)
+                        .limit(
+                                MAX_VALIDATION_ERRORS
+                        )
                         .map(
                                 UnifiedGlobalExceptionHandler
                                         ::toFieldViolation
@@ -268,7 +360,9 @@ public final class UnifiedGlobalExceptionHandler
                 400,
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
-                validationDetails(violations),
+                validationDetails(
+                        violations
+                ),
                 headers,
                 servletRequest(request)
         );
@@ -287,35 +381,36 @@ public final class UnifiedGlobalExceptionHandler
                     exception,
                     500,
                     "RESPONSE_VALIDATION_ERROR",
-                    "Ошибка формирования ответа сервиса",
+                    "Ошибка формирования "
+                            + "ответа сервиса",
                     null,
                     headers,
                     servletRequest(request)
             );
         }
 
-        List<ErrorDetails.FieldViolation> violations =
-                methodValidationViolations(exception);
+        List<ErrorDetails.FieldViolation>
+                violations =
+                methodValidationViolations(
+                        exception
+                );
 
         return createObjectResponse(
                 exception,
                 400,
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
-                validationDetails(violations),
+                validationDetails(
+                        violations
+                ),
                 headers,
                 servletRequest(request)
         );
     }
 
-    /**
-     * Общий путь для остальных стандартных MVC-ошибок,
-     * которые обрабатывает ResponseEntityExceptionHandler.
-     *
-     * <p>Исходный HTTP status и headers сохраняются.</p>
-     */
     @Override
-    protected ResponseEntity<Object> handleExceptionInternal(
+    protected ResponseEntity<Object>
+    handleExceptionInternal(
             Exception exception,
             Object body,
             HttpHeaders headers,
@@ -338,25 +433,16 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Fallback
-     * ------------------------------------------------------------
-     */
-
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse>
     handleUnexpectedError(
             Exception exception,
             HttpServletRequest request
     ) {
-        /*
-         * Сохраняем status и headers стандартных
-         * Spring ErrorResponse.
-         */
         if (exception
-                instanceof org.springframework.web.ErrorResponse
-                springError) {
+                instanceof
+                org.springframework.web.ErrorResponse
+                        springError) {
 
             PublicError publicError =
                     publicErrorForStatus(
@@ -376,10 +462,6 @@ public final class UnifiedGlobalExceptionHandler
             );
         }
 
-        /*
-         * Не ломаем пользовательские исключения,
-         * помеченные @ResponseStatus.
-         */
         ResponseStatus responseStatus =
                 AnnotatedElementUtils
                         .findMergedAnnotation(
@@ -389,11 +471,17 @@ public final class UnifiedGlobalExceptionHandler
 
         if (responseStatus != null) {
             int status =
-                    responseStatus.code().value();
+                    responseStatus
+                            .code()
+                            .value();
 
-            if (status >= 400 && status <= 599) {
+            if (status >= 400
+                    && status <= 599) {
+
                 PublicError publicError =
-                        publicErrorForStatus(status);
+                        publicErrorForStatus(
+                                status
+                        );
 
                 return createResponse(
                         exception,
@@ -411,20 +499,15 @@ public final class UnifiedGlobalExceptionHandler
                 exception,
                 500,
                 INTERNAL_ERROR_CODE,
-                INTERNAL_ERROR_MESSAGE,
+                unknownErrorMessage,
                 null,
                 HttpHeaders.EMPTY,
                 request
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Response creation
-     * ------------------------------------------------------------
-     */
-
-    private ResponseEntity<ErrorResponse> createResponse(
+    private ResponseEntity<ErrorResponse>
+    createResponse(
             Exception cause,
             int status,
             String errorCode,
@@ -449,7 +532,8 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    private ResponseEntity<Object> createObjectResponse(
+    private ResponseEntity<Object>
+    createObjectResponse(
             Exception cause,
             int status,
             String errorCode,
@@ -474,12 +558,17 @@ public final class UnifiedGlobalExceptionHandler
                 );
 
         return ResponseEntity
-                .status(body.getStatus())
-                .headers(copyHeaders(headers))
+                .status(
+                        body.getStatus()
+                )
+                .headers(
+                        copyHeaders(headers)
+                )
                 .body(body);
     }
 
-    private UnifiedErrorException createUnifiedError(
+    private UnifiedErrorException
+    createUnifiedError(
             Exception cause,
             int status,
             String errorCode,
@@ -487,7 +576,8 @@ public final class UnifiedGlobalExceptionHandler
             ErrorDetails details,
             HttpServletRequest request
     ) {
-        Instant timestamp = Instant.now();
+        Instant timestamp =
+                Instant.now();
 
         ChainElement context =
                 createContext(
@@ -504,13 +594,17 @@ public final class UnifiedGlobalExceptionHandler
                 status,
                 errorCode,
                 message,
-                details,
+                technicalDetailsFactory.enrich(
+                        details,
+                        cause
+                ),
                 context,
                 maxChainSize
         );
     }
 
-    private ResponseEntity<ErrorResponse> toResponseEntity(
+    private ResponseEntity<ErrorResponse>
+    toResponseEntity(
             UnifiedErrorException exception,
             HttpHeaders headers
     ) {
@@ -520,16 +614,14 @@ public final class UnifiedGlobalExceptionHandler
                 );
 
         return ResponseEntity
-                .status(body.getStatus())
-                .headers(copyHeaders(headers))
+                .status(
+                        body.getStatus()
+                )
+                .headers(
+                        copyHeaders(headers)
+                )
                 .body(body);
     }
-
-    /*
-     * ------------------------------------------------------------
-     * Request context
-     * ------------------------------------------------------------
-     */
 
     private ChainElement createContext(
             HttpServletRequest request,
@@ -543,8 +635,12 @@ public final class UnifiedGlobalExceptionHandler
 
         return ChainElement.builder()
                 .service(currentService)
-                .component(location.component())
-                .operation(location.operation())
+                .component(
+                        location.component()
+                )
+                .operation(
+                        location.operation()
+                )
                 .errorCode(errorCode)
                 .message(message)
                 .timestamp(timestamp)
@@ -552,20 +648,24 @@ public final class UnifiedGlobalExceptionHandler
                 .build();
     }
 
-    private static RequestLocation resolveLocation(
+    private static RequestLocation
+    resolveLocation(
             HttpServletRequest request
     ) {
-        Object handler = request.getAttribute(
-                HandlerMapping
-                        .BEST_MATCHING_HANDLER_ATTRIBUTE
-        );
+        Object handler =
+                request.getAttribute(
+                        HandlerMapping
+                                .BEST_MATCHING_HANDLER_ATTRIBUTE
+                );
 
-        if (handler instanceof HandlerMethod handlerMethod) {
+        if (handler
+                instanceof
+                HandlerMethod handlerMethod) {
+
             return new RequestLocation(
                     handlerMethod
                             .getBeanType()
                             .getSimpleName(),
-
                     handlerMethod
                             .getMethod()
                             .getName()
@@ -578,29 +678,29 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Headers
-     * ------------------------------------------------------------
-     */
-
     private static HttpHeaders copyHeaders(
             HttpHeaders headers
     ) {
-        if (headers == null || headers.isEmpty()) {
+        if (headers == null
+                || headers.isEmpty()) {
+
             return new HttpHeaders();
         }
 
         return HttpHeaders.copyOf(headers);
     }
 
-    private static HttpServletRequest servletRequest(
+    private static HttpServletRequest
+    servletRequest(
             WebRequest request
     ) {
         if (request
-                instanceof ServletWebRequest servletWebRequest) {
+                instanceof
+                ServletWebRequest
+                        servletWebRequest) {
 
-            return servletWebRequest.getRequest();
+            return servletWebRequest
+                    .getRequest();
         }
 
         throw new IllegalStateException(
@@ -608,28 +708,26 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Type mismatch
-     * ------------------------------------------------------------
-     */
-
-    private static ErrorDetails typeMismatchDetails(
+    private static ErrorDetails
+    typeMismatchDetails(
             TypeMismatchException exception
     ) {
         String field;
 
         if (exception
                 instanceof
-                MethodArgumentTypeMismatchException mismatch) {
+                MethodArgumentTypeMismatchException
+                        mismatch) {
 
             field = safeFieldName(
                     mismatch.getName()
             );
 
         } else {
+
             field = safeFieldName(
-                    exception.getPropertyName()
+                    exception
+                            .getPropertyName()
             );
         }
 
@@ -649,35 +747,38 @@ public final class UnifiedGlobalExceptionHandler
                 .build();
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Method validation
-     * ------------------------------------------------------------
-     */
-
-    private static List<ErrorDetails.FieldViolation>
+    private static
+    List<ErrorDetails.FieldViolation>
     methodValidationViolations(
             HandlerMethodValidationException exception
     ) {
-        List<ErrorDetails.FieldViolation> result =
+        List<ErrorDetails.FieldViolation>
+                result =
                 new ArrayList<>();
 
-        for (ParameterValidationResult validationResult
-                : exception.getParameterValidationResults()) {
+        for (ParameterValidationResult
+                validationResult
+                : exception
+                .getParameterValidationResults()) {
 
-            if (result.size() >= MAX_VALIDATION_ERRORS) {
+            if (result.size()
+                    >= MAX_VALIDATION_ERRORS) {
+
                 break;
             }
 
             if (validationResult
-                    instanceof ParameterErrors errors) {
+                    instanceof
+                    ParameterErrors errors) {
 
                 for (ObjectError error
                         : errors.getAllErrors()) {
 
                     addViolation(
                             result,
-                            toFieldViolation(error)
+                            toFieldViolation(
+                                    error
+                            )
                     );
                 }
 
@@ -721,27 +822,28 @@ public final class UnifiedGlobalExceptionHandler
     }
 
     private static void addViolation(
-            List<ErrorDetails.FieldViolation> target,
-            ErrorDetails.FieldViolation violation
+            List<ErrorDetails.FieldViolation>
+                    target,
+            ErrorDetails.FieldViolation
+                    violation
     ) {
-        if (target.size() < MAX_VALIDATION_ERRORS) {
+        if (target.size()
+                < MAX_VALIDATION_ERRORS) {
+
             target.add(violation);
         }
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Validation mapping
-     * ------------------------------------------------------------
-     */
-
     private static ErrorDetails.FieldViolation
-    toFieldViolation(ObjectError error) {
-
+    toFieldViolation(
+            ObjectError error
+    ) {
         String field =
-                error instanceof FieldError fieldError
+                error
+                        instanceof FieldError fieldError
                         ? safeFieldName(
-                        fieldError.getField()
+                        fieldError
+                                .getField()
                 )
                         : "request";
 
@@ -750,11 +852,15 @@ public final class UnifiedGlobalExceptionHandler
                         error.getCode()
                 );
 
-        return ErrorDetails.FieldViolation.of(
-                field,
-                reasonCode,
-                validationMessage(reasonCode)
-        );
+        return ErrorDetails
+                .FieldViolation
+                .of(
+                        field,
+                        reasonCode,
+                        validationMessage(
+                                reasonCode
+                        )
+                );
     }
 
     private static ErrorDetails.FieldViolation
@@ -769,11 +875,15 @@ public final class UnifiedGlobalExceptionHandler
                         )
                 );
 
-        return ErrorDetails.FieldViolation.of(
-                safeFieldName(field),
-                reasonCode,
-                validationMessage(reasonCode)
-        );
+        return ErrorDetails
+                .FieldViolation
+                .of(
+                        safeFieldName(field),
+                        reasonCode,
+                        validationMessage(
+                                reasonCode
+                        )
+                );
     }
 
     private static ErrorDetails.FieldViolation
@@ -799,15 +909,21 @@ public final class UnifiedGlobalExceptionHandler
                         constraintName
                 );
 
-        return ErrorDetails.FieldViolation.of(
-                field,
-                reasonCode,
-                validationMessage(reasonCode)
-        );
+        return ErrorDetails
+                .FieldViolation
+                .of(
+                        field,
+                        reasonCode,
+                        validationMessage(
+                                reasonCode
+                        )
+                );
     }
 
-    private static ErrorDetails validationDetails(
-            List<ErrorDetails.FieldViolation> violations
+    private static ErrorDetails
+    validationDetails(
+            List<ErrorDetails.FieldViolation>
+                    violations
     ) {
         if (violations.isEmpty()) {
             return null;
@@ -824,15 +940,19 @@ public final class UnifiedGlobalExceptionHandler
         String name =
                 parameter.getParameterName();
 
-        if (name == null || name.isBlank()) {
+        if (name == null
+                || name.isBlank()) {
+
             return "argument"
-                    + parameter.getParameterIndex();
+                    + parameter
+                    .getParameterIndex();
         }
 
         return safeFieldName(name);
     }
 
-    private static String validationReasonCode(
+    private static String
+    validationReasonCode(
             String springCode
     ) {
         if (springCode == null) {
@@ -840,28 +960,42 @@ public final class UnifiedGlobalExceptionHandler
         }
 
         if (springCode.contains("NotNull")
-                || springCode.contains("NotBlank")
-                || springCode.contains("NotEmpty")) {
+                || springCode.contains(
+                "NotBlank"
+        )
+                || springCode.contains(
+                "NotEmpty"
+        )) {
 
             return "REQUIRED";
         }
 
         if (springCode.contains("Size")
-                || springCode.contains("Length")) {
+                || springCode.contains(
+                "Length"
+        )) {
 
             return "INVALID_SIZE";
         }
 
         if (springCode.contains("Min")
-                || springCode.contains("DecimalMin")
-                || springCode.contains("Positive")) {
+                || springCode.contains(
+                "DecimalMin"
+        )
+                || springCode.contains(
+                "Positive"
+        )) {
 
             return "TOO_SMALL";
         }
 
         if (springCode.contains("Max")
-                || springCode.contains("DecimalMax")
-                || springCode.contains("Negative")) {
+                || springCode.contains(
+                "DecimalMax"
+        )
+                || springCode.contains(
+                "Negative"
+        )) {
 
             return "TOO_LARGE";
         }
@@ -881,6 +1015,7 @@ public final class UnifiedGlobalExceptionHandler
             String reasonCode
     ) {
         return switch (reasonCode) {
+
             case "REQUIRED" ->
                     "Поле обязательно";
 
@@ -905,103 +1040,115 @@ public final class UnifiedGlobalExceptionHandler
         };
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Standard Spring status mapping
-     * ------------------------------------------------------------
-     */
-
-    private static PublicError publicErrorForStatus(
+    private PublicError publicErrorForStatus(
             int status
     ) {
-        if (status < 400 || status > 599) {
+        if (status < 400
+                || status > 599) {
+
             return new PublicError(
                     500,
                     INTERNAL_ERROR_CODE,
-                    INTERNAL_ERROR_MESSAGE
+                    unknownErrorMessage
             );
         }
 
         return switch (status) {
-            case 400 -> new PublicError(
-                    400,
-                    "INVALID_REQUEST",
-                    "Некорректный запрос"
-            );
 
-            case 401 -> new PublicError(
-                    401,
-                    "AUTHENTICATION_REQUIRED",
-                    "Требуется аутентификация"
-            );
+            case 400 ->
+                    new PublicError(
+                            400,
+                            "INVALID_REQUEST",
+                            "Некорректный запрос"
+                    );
 
-            case 403 -> new PublicError(
-                    403,
-                    "ACCESS_DENIED",
-                    "Доступ запрещён"
-            );
+            case 401 ->
+                    new PublicError(
+                            401,
+                            "AUTHENTICATION_REQUIRED",
+                            "Требуется аутентификация"
+                    );
 
-            case 404 -> new PublicError(
-                    404,
-                    "RESOURCE_NOT_FOUND",
-                    "Ресурс не найден"
-            );
+            case 403 ->
+                    new PublicError(
+                            403,
+                            "ACCESS_DENIED",
+                            "Доступ запрещён"
+                    );
 
-            case 405 -> new PublicError(
-                    405,
-                    "METHOD_NOT_ALLOWED",
-                    "HTTP-метод не поддерживается"
-            );
+            case 404 ->
+                    new PublicError(
+                            404,
+                            "RESOURCE_NOT_FOUND",
+                            "Ресурс не найден"
+                    );
 
-            case 406 -> new PublicError(
-                    406,
-                    "NOT_ACCEPTABLE",
-                    "Запрошенный формат ответа "
-                            + "не поддерживается"
-            );
+            case 405 ->
+                    new PublicError(
+                            405,
+                            "METHOD_NOT_ALLOWED",
+                            "HTTP-метод не поддерживается"
+                    );
 
-            case 409 -> new PublicError(
-                    409,
-                    "CONFLICT",
-                    "Запрос конфликтует "
-                            + "с текущим состоянием ресурса"
-            );
+            case 406 ->
+                    new PublicError(
+                            406,
+                            "NOT_ACCEPTABLE",
+                            "Запрошенный формат ответа "
+                                    + "не поддерживается"
+                    );
 
-            case 413 -> new PublicError(
-                    413,
-                    "PAYLOAD_TOO_LARGE",
-                    "Размер запроса превышает "
-                            + "допустимый предел"
-            );
+            case 409 ->
+                    new PublicError(
+                            409,
+                            "CONFLICT",
+                            "Запрос конфликтует "
+                                    + "с текущим "
+                                    + "состоянием ресурса"
+                    );
 
-            case 415 -> new PublicError(
-                    415,
-                    "UNSUPPORTED_MEDIA_TYPE",
-                    "Формат тела запроса "
-                            + "не поддерживается"
-            );
+            case 413 ->
+                    new PublicError(
+                            413,
+                            "PAYLOAD_TOO_LARGE",
+                            "Размер запроса превышает "
+                                    + "допустимый предел"
+                    );
 
-            case 422 -> new PublicError(
-                    422,
-                    "UNPROCESSABLE_CONTENT",
-                    "Запрос не может быть обработан"
-            );
+            case 415 ->
+                    new PublicError(
+                            415,
+                            "UNSUPPORTED_MEDIA_TYPE",
+                            "Формат тела запроса "
+                                    + "не поддерживается"
+                    );
 
-            case 429 -> new PublicError(
-                    429,
-                    "TOO_MANY_REQUESTS",
-                    "Превышено допустимое "
-                            + "количество запросов"
-            );
+            case 422 ->
+                    new PublicError(
+                            422,
+                            "UNPROCESSABLE_CONTENT",
+                            "Запрос не может "
+                                    + "быть обработан"
+                    );
 
-            case 500 -> new PublicError(
-                    500,
-                    INTERNAL_ERROR_CODE,
-                    INTERNAL_ERROR_MESSAGE
-            );
+            case 429 ->
+                    new PublicError(
+                            429,
+                            "TOO_MANY_REQUESTS",
+                            "Превышено допустимое "
+                                    + "количество запросов"
+                    );
+
+            case 500 ->
+                    new PublicError(
+                            500,
+                            INTERNAL_ERROR_CODE,
+                            unknownErrorMessage
+                    );
 
             default -> {
                 if (status < 500) {
+
                     yield new PublicError(
                             status,
                             "CLIENT_ERROR",
@@ -1012,32 +1159,32 @@ public final class UnifiedGlobalExceptionHandler
                 yield new PublicError(
                         status,
                         "SERVER_ERROR",
-                        INTERNAL_ERROR_MESSAGE
+                        unknownErrorMessage
                 );
             }
         };
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Utility
-     * ------------------------------------------------------------
-     */
-
     private static String lastCode(
             String[] codes
     ) {
-        if (codes == null || codes.length == 0) {
+        if (codes == null
+                || codes.length == 0) {
+
             return null;
         }
 
-        return codes[codes.length - 1];
+        return codes[
+                codes.length - 1
+                ];
     }
 
     private static String lastPathElement(
             String path
     ) {
-        if (path == null || path.isBlank()) {
+        if (path == null
+                || path.isBlank()) {
+
             return "request";
         }
 
@@ -1046,7 +1193,9 @@ public final class UnifiedGlobalExceptionHandler
 
         String result =
                 separator >= 0
-                        ? path.substring(separator + 1)
+                        ? path.substring(
+                        separator + 1
+                )
                         : path;
 
         return safeFieldName(result);
@@ -1055,15 +1204,26 @@ public final class UnifiedGlobalExceptionHandler
     private static String safeFieldName(
             String field
     ) {
-        if (field == null || field.isBlank()) {
+        if (field == null
+                || field.isBlank()) {
+
             return "request";
         }
 
         String normalized =
                 field
-                        .replace('\r', '_')
-                        .replace('\n', '_')
-                        .replace('\t', '_')
+                        .replace(
+                                '\r',
+                                '_'
+                        )
+                        .replace(
+                                '\n',
+                                '_'
+                        )
+                        .replace(
+                                '\t',
+                                '_'
+                        )
                         .trim();
 
         if (normalized.isEmpty()) {
@@ -1084,14 +1244,16 @@ public final class UnifiedGlobalExceptionHandler
             String value
     ) {
         String normalized =
-                value == null || value.isBlank()
+                value == null
+                        || value.isBlank()
                         ? "application"
                         : value.trim();
 
         if (normalized.length() > 120) {
             throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "exceed 120 characters"
+                    "spring.application.name "
+                            + "must not exceed "
+                            + "120 characters"
             );
         }
 
@@ -1100,8 +1262,9 @@ public final class UnifiedGlobalExceptionHandler
                 || normalized.indexOf('\t') >= 0) {
 
             throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "contain control characters"
+                    "spring.application.name "
+                            + "must not contain "
+                            + "control characters"
             );
         }
 
@@ -1112,12 +1275,12 @@ public final class UnifiedGlobalExceptionHandler
             int value
     ) {
         if (value < 1
-                || value > ABSOLUTE_MAX_CHAIN_SIZE) {
+                || value > 100) {
 
             throw new IllegalArgumentException(
-                    "catchup.errors.max-chain-size "
-                            + "must be from 1 to "
-                            + ABSOLUTE_MAX_CHAIN_SIZE
+                    "catchup.errors."
+                            + "max-chain-size "
+                            + "must be from 1 to 100"
             );
         }
 
