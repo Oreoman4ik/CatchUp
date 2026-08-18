@@ -13,6 +13,7 @@ import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
+import ru.oreoman4ik.catchup.model.TruncationInfo;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -24,7 +25,6 @@ import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.http.HttpTimeoutException;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 
 public final class OutgoingHttpExceptionMapper {
@@ -68,7 +68,8 @@ public final class OutgoingHttpExceptionMapper {
 
         if (technicalDetailsFactory == null) {
             throw new IllegalArgumentException(
-                    "technicalDetailsFactory is required"
+                    "technicalDetailsFactory "
+                            + "is required"
             );
         }
 
@@ -85,10 +86,8 @@ public final class OutgoingHttpExceptionMapper {
                 technicalDetailsFactory;
     }
 
-    /*
-     * Оставляем старый constructor, чтобы текущие
-     * unit-тесты и ручное создание mapper продолжили
-     * работать.
+    /**
+     * Совместимость со старыми unit tests.
      */
     public OutgoingHttpExceptionMapper(
             String currentService,
@@ -111,7 +110,8 @@ public final class OutgoingHttpExceptionMapper {
                 new RemoteErrorResponseDecoder(
                         JsonMapper
                                 .builder()
-                                .build()
+                                .build(),
+                        properties
                 );
 
         this.technicalDetailsFactory =
@@ -166,24 +166,32 @@ public final class OutgoingHttpExceptionMapper {
             );
         }
 
+        RemoteErrorResponseDecoder.DecodeResult
+                decodeResult = null;
+
         /*
-         * Сначала пробуем восстановить
-         * ErrorResponse другого сервиса.
+         * Сначала пытаемся восстановить
+         * структурированную ошибку другого сервиса.
          */
         if (cause
                 instanceof
                 RestClientResponseException
                         responseException) {
 
-            Optional<ErrorResponse> decoded =
+            decodeResult =
                     remoteErrorResponseDecoder
-                            .decode(
+                            .decodeWithMetadata(
                                     responseException
                             );
 
-            if (decoded.isPresent()) {
+            if (decodeResult
+                    .response()
+                    .isPresent()) {
+
                 return restore(
-                        decoded.get(),
+                        decodeResult
+                                .response()
+                                .get(),
                         responseException,
                         service,
                         component,
@@ -193,11 +201,6 @@ public final class OutgoingHttpExceptionMapper {
             }
         }
 
-        /*
-         * Неизвестный/повреждённый remote body
-         * попадает в обычную классификацию и
-         * получает новый errorId.
-         */
         Mapping mapping =
                 classify(cause);
 
@@ -213,23 +216,53 @@ public final class OutgoingHttpExceptionMapper {
                         cause
                 );
 
-        return UnifiedErrorException.from(
-                cause,
-                Instant.now(),
-                mapping.status(),
-                mapping.errorCode(),
-                responseMessage,
-                details,
+        /*
+         * Remote body превышает допустимый
+         * объём — фиксируем это в response metadata.
+         */
+        if (decodeResult != null
+                && decodeResult
+                .remoteBodyTruncated()) {
+
+            details =
+                    ErrorDetails.mergeTruncation(
+                            details,
+                            new TruncationInfo(
+                                    false,
+                                    false,
+                                    false,
+                                    true
+                            )
+                    );
+        }
+
+        UnifiedErrorException unified =
+                UnifiedErrorException.from(
+                        cause,
+                        Instant.now(),
+                        mapping.status(),
+                        mapping.errorCode(),
+                        responseMessage,
+                        details,
+                        maxChainSize
+                );
+
+        /*
+         * Используем уже нормализованное сообщение
+         * из UnifiedErrorException.
+         */
+        unified.addContext(
                 context(
                         service,
                         component,
                         operation,
                         mapping.status(),
                         mapping.errorCode(),
-                        responseMessage
-                ),
-                maxChainSize
+                        unified.getMessage()
+                )
         );
+
+        return unified;
     }
 
     public UnifiedErrorException restore(
@@ -269,11 +302,11 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         /*
-         * Публичные remote details сохраняются.
-         *
          * Remote technical details не проксируются.
-         * Если технические details разрешены локально,
-         * добавляются данные локального HTTP exception.
+         *
+         * При включённых local technical details
+         * используются данные локального
+         * HTTP exception.
          */
         ErrorDetails details =
                 technicalDetailsFactory.enrich(
@@ -308,6 +341,10 @@ public final class OutgoingHttpExceptionMapper {
                         .details(details)
                         .build();
 
+        /*
+         * Одно место резервируется
+         * под текущий сервис.
+         */
         UnifiedErrorException restored =
                 UnifiedErrorException
                         .fromResponse(
@@ -406,7 +443,8 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         if (cause
-                instanceof UnknownContentTypeException
+                instanceof
+                UnknownContentTypeException
                 || hasCause(
                 cause,
                 HttpMessageNotReadableException.class
@@ -447,7 +485,8 @@ public final class OutgoingHttpExceptionMapper {
         }
 
         if (cause
-                instanceof ResourceAccessException
+                instanceof
+                ResourceAccessException
                 || hasCause(
                 cause,
                 IOException.class

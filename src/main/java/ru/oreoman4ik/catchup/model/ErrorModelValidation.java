@@ -1,5 +1,7 @@
 package ru.oreoman4ik.catchup.model;
 
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
+
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -11,18 +13,24 @@ final class ErrorModelValidation {
     static final String UTC_TIME_ZONE = "UTC";
 
     private static final Pattern PUBLIC_CODE =
-            Pattern.compile("[A-Z][A-Z0-9_]{1,63}");
+            Pattern.compile(
+                    "[A-Z][A-Z0-9_]{1,63}"
+            );
 
     private static final Pattern CONTROL_CHARACTERS =
             Pattern.compile("[\\r\\n\\t]");
 
-    private static final String JAVA_EXCEPTION_SUFFIX =
+    private static final String
+            JAVA_EXCEPTION_SUFFIX =
             "EXCEPTION";
 
     private ErrorModelValidation() {
     }
 
-    static <T> T required(String fieldName, T value) {
+    static <T> T required(
+            String fieldName,
+            T value
+    ) {
         if (value == null) {
             throw new IllegalArgumentException(
                     fieldName + " is required"
@@ -37,13 +45,18 @@ final class ErrorModelValidation {
             String value,
             int maxLength
     ) {
-        required(fieldName, value);
+        required(
+                fieldName,
+                value
+        );
 
-        String normalized = value.trim();
+        String normalized =
+                value.trim();
 
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException(
-                    fieldName + " must not be blank"
+                    fieldName
+                            + " must not be blank"
             );
         }
 
@@ -56,35 +69,51 @@ final class ErrorModelValidation {
             );
         }
 
-        if (CONTROL_CHARACTERS.matcher(normalized).find()) {
+        if (CONTROL_CHARACTERS
+                .matcher(normalized)
+                .find()) {
+
             throw new IllegalArgumentException(
                     fieldName
-                            + " must not contain control characters"
+                            + " must not contain "
+                            + "control characters"
             );
         }
 
         return normalized;
     }
 
-    static String publicCode(String fieldName, String value) {
-        String normalized = requiredText(
-                fieldName,
-                value,
-                64
-        );
+    static String publicCode(
+            String fieldName,
+            String value
+    ) {
+        String normalized =
+                requiredText(
+                        fieldName,
+                        value,
+                        64
+                );
 
-        if (!PUBLIC_CODE.matcher(normalized).matches()) {
+        if (!PUBLIC_CODE
+                .matcher(normalized)
+                .matches()) {
+
             throw new IllegalArgumentException(
                     fieldName
-                            + " must be a public code matching "
+                            + " must be a public code "
+                            + "matching "
                             + PUBLIC_CODE.pattern()
             );
         }
 
-        if (normalized.endsWith(JAVA_EXCEPTION_SUFFIX)) {
+        if (normalized.endsWith(
+                JAVA_EXCEPTION_SUFFIX
+        )) {
+
             throw new IllegalArgumentException(
                     fieldName
-                            + " must not contain a Java exception type"
+                            + " must not contain "
+                            + "a Java exception type"
             );
         }
 
@@ -97,29 +126,47 @@ final class ErrorModelValidation {
     ) {
         return value == null
                 ? null
-                : publicCode(fieldName, value);
+                : publicCode(
+                fieldName,
+                value
+        );
     }
 
     /**
-     * Проверяет только структуру публичного текста.
-     *
-     * <p>Содержательная безопасность обеспечивается тем, что сюда
-     * передаётся сообщение из контролируемого каталога, а не
-     * {@code exception.getMessage()}.</p>
+     * Публичные сообщения не могут бесконтрольно
+     * увеличивать HTTP response.
      */
     static String publicMessage(
             String fieldName,
             String value
     ) {
-        return requiredText(fieldName, value, 500);
-    }
+        try {
+            return ErrorDataLimiter
+                    .publicMessage(value)
+                    .value();
 
-    static int httpStatus(String fieldName, int value) {
-        if (value < 400 || value > 599) {
+        } catch (IllegalArgumentException exception) {
+
             throw new IllegalArgumentException(
                     fieldName
-                            + " must be an HTTP error status "
-                            + "from 400 to 599"
+                            + ": "
+                            + exception.getMessage(),
+                    exception
+            );
+        }
+    }
+
+    static int httpStatus(
+            String fieldName,
+            int value
+    ) {
+        if (value < 400
+                || value > 599) {
+
+            throw new IllegalArgumentException(
+                    fieldName
+                            + " must be an HTTP "
+                            + "error status from 400 to 599"
             );
         }
 
@@ -132,33 +179,44 @@ final class ErrorModelValidation {
     ) {
         return value == null
                 ? null
-                : httpStatus(fieldName, value);
+                : httpStatus(
+                fieldName,
+                value
+        );
     }
 
     static Long nonNegativeLong(
             String fieldName,
             Long value
     ) {
-        if (value != null && value < 0) {
+        if (value != null
+                && value < 0) {
+
             throw new IllegalArgumentException(
                     fieldName
-                            + " must be greater than or equal to zero"
+                            + " must be greater than "
+                            + "or equal to zero"
             );
         }
 
         return value;
     }
 
-    static <T> List<T> immutableNonEmptyList(
+    static <T> List<T>
+    immutableNonEmptyList(
             String fieldName,
             List<T> source,
             int maxSize
     ) {
-        required(fieldName, source);
+        required(
+                fieldName,
+                source
+        );
 
         if (source.isEmpty()) {
             throw new IllegalArgumentException(
-                    fieldName + " must not be empty"
+                    fieldName
+                            + " must not be empty"
             );
         }
 
@@ -169,7 +227,8 @@ final class ErrorModelValidation {
         );
     }
 
-    static <T> List<T> immutableOptionalList(
+    static <T> List<T>
+    immutableOptionalList(
             String fieldName,
             List<T> source,
             int maxSize
@@ -183,7 +242,8 @@ final class ErrorModelValidation {
         );
     }
 
-    private static <T> List<T> immutableList(
+    private static <T> List<T>
+    immutableList(
             String fieldName,
             List<T> source,
             int maxSize
@@ -191,17 +251,22 @@ final class ErrorModelValidation {
         if (source.size() > maxSize) {
             throw new IllegalArgumentException(
                     fieldName
-                            + " must not contain more than "
+                            + " must not contain "
+                            + "more than "
                             + maxSize
                             + " elements"
             );
         }
 
-        for (int index = 0; index < source.size(); index++) {
+        for (int index = 0;
+             index < source.size();
+             index++) {
+
             if (source.get(index) == null) {
                 throw new IllegalArgumentException(
                         fieldName
-                                + " must not contain null at index "
+                                + " must not contain "
+                                + "null at index "
                                 + index
                 );
             }

@@ -1,6 +1,7 @@
 package ru.oreoman4ik.catchup.client;
 
 import org.springframework.web.client.RestClientResponseException;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -8,8 +9,40 @@ import java.util.Optional;
 
 public final class RemoteErrorResponseDecoder {
 
+    private static final int
+            DEFAULT_MAX_REMOTE_BODY_BYTES =
+            2 * 1024 * 1024;
+
     private final JsonMapper jsonMapper;
 
+    private final int maxRemoteBodyBytes;
+
+    public RemoteErrorResponseDecoder(
+            JsonMapper jsonMapper,
+            UnifiedErrorProperties properties
+    ) {
+        if (jsonMapper == null) {
+            throw new IllegalArgumentException(
+                    "jsonMapper is required"
+            );
+        }
+
+        if (properties == null) {
+            throw new IllegalArgumentException(
+                    "properties is required"
+            );
+        }
+
+        this.jsonMapper = jsonMapper;
+
+        this.maxRemoteBodyBytes =
+                properties
+                        .getMaxRemoteBodyBytes();
+    }
+
+    /*
+     * Для существующих unit-тестов.
+     */
     public RemoteErrorResponseDecoder(
             JsonMapper jsonMapper
     ) {
@@ -20,21 +53,16 @@ public final class RemoteErrorResponseDecoder {
         }
 
         this.jsonMapper = jsonMapper;
+
+        this.maxRemoteBodyBytes =
+                DEFAULT_MAX_REMOTE_BODY_BYTES;
     }
 
-    /**
-     * Пытается прочитать ErrorResponse другого сервиса.
-     *
-     * <p>Повреждённый JSON, неизвестный формат или
-     * несовпадение HTTP-статуса не выбрасываются наружу:
-     * вызывающий код сможет применить обычную fallback
-     * классификацию HTTP-ошибки.</p>
-     */
-    public Optional<ErrorResponse> decode(
+    public DecodeResult decodeWithMetadata(
             RestClientResponseException exception
     ) {
         if (exception == null) {
-            return Optional.empty();
+            return DecodeResult.unsupported();
         }
 
         byte[] body =
@@ -42,7 +70,16 @@ public final class RemoteErrorResponseDecoder {
                         .getResponseBodyAsByteArray();
 
         if (body.length == 0) {
-            return Optional.empty();
+            return DecodeResult.unsupported();
+        }
+
+        if (body.length
+                > maxRemoteBodyBytes) {
+
+            /*
+             * Не пытаемся парсить большой JSON.
+             */
+            return DecodeResult.tooLarge();
         }
 
         try {
@@ -52,28 +89,62 @@ public final class RemoteErrorResponseDecoder {
                             ErrorResponse.class
                     );
 
-            /*
-             * Не доверяем JSON, если заявленный status
-             * отличается от реального HTTP status.
-             */
             if (response.getStatus()
                     != exception
                     .getStatusCode()
                     .value()) {
 
-                return Optional.empty();
+                return DecodeResult
+                        .unsupported();
             }
 
-            return Optional.of(response);
+            return DecodeResult.supported(
+                    response
+            );
 
         } catch (Exception ignored) {
 
-            /*
-             * Повреждённый JSON или чужой формат
-             * не должны создавать вторую
-             * необработанную ошибку.
-             */
-            return Optional.empty();
+            return DecodeResult.unsupported();
+        }
+    }
+
+    /*
+     * Сохраняем старый API.
+     */
+    public Optional<ErrorResponse> decode(
+            RestClientResponseException exception
+    ) {
+        return decodeWithMetadata(
+                exception
+        ).response();
+    }
+
+    public record DecodeResult(
+            Optional<ErrorResponse> response,
+            boolean remoteBodyTruncated
+    ) {
+
+        static DecodeResult supported(
+                ErrorResponse response
+        ) {
+            return new DecodeResult(
+                    Optional.of(response),
+                    false
+            );
+        }
+
+        static DecodeResult unsupported() {
+            return new DecodeResult(
+                    Optional.empty(),
+                    false
+            );
+        }
+
+        static DecodeResult tooLarge() {
+            return new DecodeResult(
+                    Optional.empty(),
+                    true
+            );
         }
     }
 }

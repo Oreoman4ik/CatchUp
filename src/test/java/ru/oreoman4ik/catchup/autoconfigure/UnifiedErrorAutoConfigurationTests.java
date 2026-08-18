@@ -1,60 +1,64 @@
 package ru.oreoman4ik.catchup.autoconfigure;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.runner
-        .WebApplicationContextRunner;
-import org.springframework.mock.web
-        .MockHttpServletRequest;
-import ru.oreoman4ik.catchup.client
-        .OutgoingHttpExceptionMapper;
-import ru.oreoman4ik.catchup.config
-        .CurrentServiceName;
-import ru.oreoman4ik.catchup.config
-        .TechnicalDetailsFactory;
-import ru.oreoman4ik.catchup.config
-        .UnifiedErrorProperties;
-import ru.oreoman4ik.catchup.context
-        .ErrorContextAspect;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.mock.web.MockHttpServletRequest;
+import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
+import ru.oreoman4ik.catchup.client.RemoteErrorResponseDecoder;
+import ru.oreoman4ik.catchup.config.CurrentServiceName;
+import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
+import ru.oreoman4ik.catchup.context.ErrorContextAspect;
+import ru.oreoman4ik.catchup.logging.ErrorLogSink;
+import ru.oreoman4ik.catchup.logging.Slf4jErrorLogSink;
+import ru.oreoman4ik.catchup.logging.UnifiedErrorLogger;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
-import ru.oreoman4ik.catchup.web
-        .UnifiedGlobalExceptionHandler;
+import ru.oreoman4ik.catchup.web.UnifiedGlobalExceptionHandler;
 import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class UnifiedErrorAutoConfigurationTests {
 
-    private final WebApplicationContextRunner
-            contextRunner =
+    private final WebApplicationContextRunner contextRunner =
             new WebApplicationContextRunner()
                     .withUserConfiguration(
-                            UnifiedErrorAutoConfiguration
-                                    .class
+                            UnifiedErrorAutoConfiguration.class
                     )
                     .withBean(
                             JsonMapper.class,
-                            () -> JsonMapper
-                                    .builder()
-                                    .build()
+                            () -> JsonMapper.builder().build()
                     );
 
     @Test
     void worksWithoutMandatoryConfiguration() {
         contextRunner.run(context -> {
-            assertThat(
-                    context.getStartupFailure()
-            ).isNull();
+            assertThat(context.getStartupFailure())
+                    .isNull();
 
             assertThat(context)
                     .hasSingleBean(
-                            UnifiedErrorProperties
-                                    .class
+                            UnifiedErrorProperties.class
                     );
 
             assertThat(context)
                     .hasSingleBean(
-                            OutgoingHttpExceptionMapper
-                                    .class
+                            CurrentServiceName.class
+                    );
+
+            assertThat(context)
+                    .hasSingleBean(
+                            TechnicalDetailsFactory.class
+                    );
+
+            assertThat(context)
+                    .hasSingleBean(
+                            RemoteErrorResponseDecoder.class
+                    );
+
+            assertThat(context)
+                    .hasSingleBean(
+                            OutgoingHttpExceptionMapper.class
                     );
 
             assertThat(context)
@@ -64,34 +68,70 @@ class UnifiedErrorAutoConfigurationTests {
 
             assertThat(context)
                     .hasSingleBean(
-                            UnifiedGlobalExceptionHandler
-                                    .class
+                            ErrorLogSink.class
                     );
 
+            assertThat(context)
+                    .hasSingleBean(
+                            UnifiedErrorLogger.class
+                    );
+
+            assertThat(context)
+                    .hasSingleBean(
+                            UnifiedGlobalExceptionHandler.class
+                    );
+
+            assertThat(
+                    context.getBean(
+                            ErrorLogSink.class
+                    )
+            ).isInstanceOf(
+                    Slf4jErrorLogSink.class
+            );
+        });
+    }
+
+    @Test
+    void safeDefaultsAreApplied() {
+        contextRunner.run(context -> {
             UnifiedErrorProperties properties =
                     context.getBean(
                             UnifiedErrorProperties.class
                     );
 
-            assertThat(
-                    properties.getMaxChainSize()
-            ).isEqualTo(10);
+            assertThat(properties.isEnabled())
+                    .isTrue();
+
+            assertThat(properties.getMaxChainSize())
+                    .isEqualTo(10);
 
             assertThat(
-                    properties
-                            .isIncludeTechnicalDetails()
+                    properties.isIncludeTechnicalDetails()
             ).isFalse();
 
             assertThat(
-                    properties
-                            .isIncludeStackTrace()
+                    properties.isIncludeStackTrace()
             ).isFalse();
 
             assertThat(
-                    context.getBean(
-                            CurrentServiceName.class
-                    ).value()
-            ).isEqualTo("application");
+                    properties.getUnknownErrorMessage()
+            ).isEqualTo(
+                    "Внутренняя ошибка сервиса"
+            );
+
+            assertThat(
+                    properties.getMaxRemoteBodyBytes()
+            ).isEqualTo(
+                    2 * 1024 * 1024
+            );
+
+            assertThat(
+                    properties.getMaxStackTraceLines()
+            ).isEqualTo(100);
+
+            assertThat(
+                    properties.getMaxTechnicalTextLength()
+            ).isEqualTo(1000);
         });
     }
 
@@ -102,16 +142,17 @@ class UnifiedErrorAutoConfigurationTests {
                         "spring.application.name="
                                 + "orders-service"
                 )
-                .run(context ->
-                        assertThat(
-                                context.getBean(
-                                        CurrentServiceName
-                                                .class
-                                ).value()
-                        ).isEqualTo(
-                                "orders-service"
-                        )
-                );
+                .run(context -> {
+                    CurrentServiceName service =
+                            context.getBean(
+                                    CurrentServiceName.class
+                            );
+
+                    assertThat(service.value())
+                            .isEqualTo(
+                                    "orders-service"
+                            );
+                });
     }
 
     @Test
@@ -124,20 +165,21 @@ class UnifiedErrorAutoConfigurationTests {
                         "catchup.errors.service-name="
                                 + "public-api"
                 )
-                .run(context ->
-                        assertThat(
-                                context.getBean(
-                                        CurrentServiceName
-                                                .class
-                                ).value()
-                        ).isEqualTo(
-                                "public-api"
-                        )
-                );
+                .run(context -> {
+                    CurrentServiceName service =
+                            context.getBean(
+                                    CurrentServiceName.class
+                            );
+
+                    assertThat(service.value())
+                            .isEqualTo(
+                                    "public-api"
+                            );
+                });
     }
 
     @Test
-    void libraryCanBeDisabled() {
+    void libraryCanBeCompletelyDisabled() {
         contextRunner
                 .withPropertyValues(
                         "catchup.errors.enabled=false"
@@ -145,8 +187,27 @@ class UnifiedErrorAutoConfigurationTests {
                 .run(context -> {
                     assertThat(context)
                             .doesNotHaveBean(
-                                    OutgoingHttpExceptionMapper
-                                            .class
+                                    UnifiedErrorProperties.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    CurrentServiceName.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    TechnicalDetailsFactory.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    RemoteErrorResponseDecoder.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    OutgoingHttpExceptionMapper.class
                             );
 
                     assertThat(context)
@@ -156,8 +217,17 @@ class UnifiedErrorAutoConfigurationTests {
 
                     assertThat(context)
                             .doesNotHaveBean(
-                                    UnifiedGlobalExceptionHandler
-                                            .class
+                                    ErrorLogSink.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    UnifiedErrorLogger.class
+                            );
+
+                    assertThat(context)
+                            .doesNotHaveBean(
+                                    UnifiedGlobalExceptionHandler.class
                             );
                 });
     }
@@ -179,6 +249,76 @@ class UnifiedErrorAutoConfigurationTests {
                             "catchup.errors.max-chain-size "
                                     + "must be from 1 to 100"
                     );
+                });
+    }
+
+    @Test
+    void oversizedChainLimitFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "catchup.errors.max-chain-size=101"
+                )
+                .run(context -> {
+                    assertThat(
+                            context.getStartupFailure()
+                    ).isNotNull();
+                });
+    }
+
+    @Test
+    void tooSmallRemoteBodyLimitFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "catchup.errors."
+                                + "max-remote-body-bytes=100"
+                )
+                .run(context -> {
+                    assertThat(
+                            context.getStartupFailure()
+                    ).isNotNull();
+                });
+    }
+
+    @Test
+    void tooLargeRemoteBodyLimitFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "catchup.errors."
+                                + "max-remote-body-bytes="
+                                + (9 * 1024 * 1024)
+                )
+                .run(context -> {
+                    assertThat(
+                            context.getStartupFailure()
+                    ).isNotNull();
+                });
+    }
+
+    @Test
+    void invalidStackTraceLinesFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "catchup.errors."
+                                + "max-stack-trace-lines=0"
+                )
+                .run(context -> {
+                    assertThat(
+                            context.getStartupFailure()
+                    ).isNotNull();
+                });
+    }
+
+    @Test
+    void invalidTechnicalTextLengthFailsFast() {
+        contextRunner
+                .withPropertyValues(
+                        "catchup.errors."
+                                + "max-technical-text-length=10"
+                )
+                .run(context -> {
+                    assertThat(
+                            context.getStartupFailure()
+                    ).isNotNull();
                 });
     }
 
@@ -210,8 +350,7 @@ class UnifiedErrorAutoConfigurationTests {
                 .run(context -> {
                     UnifiedGlobalExceptionHandler handler =
                             context.getBean(
-                                    UnifiedGlobalExceptionHandler
-                                            .class
+                                    UnifiedGlobalExceptionHandler.class
                             );
 
                     var response =
@@ -225,25 +364,18 @@ class UnifiedErrorAutoConfigurationTests {
                                     )
                             );
 
-                    assertThat(
-                            response.getBody()
-                    ).isNotNull();
+                    assertThat(response.getBody())
+                            .isNotNull();
 
                     assertThat(
-                            response
-                                    .getBody()
+                            response.getBody()
                                     .getMessage()
                     ).isEqualTo(
                             "Сервис временно недоступен"
                     );
 
-                    /*
-                     * Safe default:
-                     * technical details выключены.
-                     */
                     assertThat(
-                            response
-                                    .getBody()
+                            response.getBody()
                                     .getDetails()
                     ).isNull();
                 });
@@ -259,17 +391,19 @@ class UnifiedErrorAutoConfigurationTests {
                 .run(context -> {
                     TechnicalDetailsFactory factory =
                             context.getBean(
-                                    TechnicalDetailsFactory
-                                            .class
+                                    TechnicalDetailsFactory.class
                             );
 
                     ErrorDetails details =
                             factory.enrich(
                                     null,
                                     new IllegalStateException(
-                                            "database secret"
+                                            "database password=secret"
                                     )
                             );
+
+                    assertThat(details)
+                            .isNotNull();
 
                     assertThat(
                             details.getTechnical()
@@ -279,10 +413,17 @@ class UnifiedErrorAutoConfigurationTests {
                             details.getTechnical()
                                     .getExceptionClass()
                     ).isEqualTo(
-                            IllegalStateException
-                                    .class
+                            IllegalStateException.class
                                     .getName()
                     );
+
+                    /*
+                     * Throwable message не публикуется.
+                     */
+                    assertThat(
+                            details.getTechnical()
+                                    .getExceptionMessage()
+                    ).isNull();
 
                     assertThat(
                             details.getTechnical()
@@ -302,17 +443,18 @@ class UnifiedErrorAutoConfigurationTests {
                                 + "include-stack-trace=true"
                 )
                 .run(context -> {
-                    ErrorDetails details =
+                    TechnicalDetailsFactory factory =
                             context.getBean(
-                                            TechnicalDetailsFactory
-                                                    .class
+                                    TechnicalDetailsFactory.class
+                            );
+
+                    ErrorDetails details =
+                            factory.enrich(
+                                    null,
+                                    new IllegalStateException(
+                                            "technical"
                                     )
-                                    .enrich(
-                                            null,
-                                            new IllegalStateException(
-                                                    "technical"
-                                            )
-                                    );
+                            );
 
                     assertThat(
                             details.getTechnical()

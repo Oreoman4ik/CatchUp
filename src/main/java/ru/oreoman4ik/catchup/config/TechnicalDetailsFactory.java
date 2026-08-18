@@ -2,32 +2,42 @@ package ru.oreoman4ik.catchup.config;
 
 import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.TechnicalDetails;
+import ru.oreoman4ik.catchup.model.TruncationInfo;
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
 
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class TechnicalDetailsFactory {
 
-    private static final int MAX_STACK_TRACE_LINES =
-            100;
-
-    private static final int MAX_TECHNICAL_TEXT_LENGTH =
-            1000;
+    private static final int
+            MAX_EXCEPTION_CLASS_LENGTH = 300;
 
     private final UnifiedErrorProperties properties;
 
     public TechnicalDetailsFactory(
             UnifiedErrorProperties properties
     ) {
+        if (properties == null) {
+            throw new IllegalArgumentException(
+                    "properties is required"
+            );
+        }
+
         this.properties = properties;
     }
 
+    /**
+     * Сохраняет безопасные публичные details
+     * и при необходимости добавляет локальные
+     * technical details.
+     */
     public ErrorDetails enrich(
             ErrorDetails existing,
             Throwable throwable
     ) {
         ErrorDetails publicDetails =
-                sanitizeRemote(existing);
+                publicOnly(existing);
 
         if (!properties
                 .isIncludeTechnicalDetails()) {
@@ -35,62 +45,94 @@ public final class TechnicalDetailsFactory {
             return publicDetails;
         }
 
-        TechnicalDetails technical =
+        if (throwable == null) {
+            return publicDetails;
+        }
+
+        TechnicalResult result =
                 createTechnicalDetails(
                         throwable
                 );
 
-        return ErrorDetails.builder()
-                .resource(
-                        publicDetails == null
-                                ? null
-                                : publicDetails
-                                .getResource()
-                )
-                .violations(
-                        publicDetails == null
-                                ? List.of()
-                                : publicDetails
-                                .getViolations()
-                )
-                .retryAfterSeconds(
-                        publicDetails == null
-                                ? null
-                                : publicDetails
-                                .getRetryAfterSeconds()
-                )
-                .technical(technical)
-                .build();
+        ErrorDetails enriched =
+                ErrorDetails.builder()
+                        .resource(
+                                publicDetails == null
+                                        ? null
+                                        : publicDetails
+                                        .getResource()
+                        )
+                        .violations(
+                                publicDetails == null
+                                        ? List.of()
+                                        : publicDetails
+                                        .getViolations()
+                        )
+                        .retryAfterSeconds(
+                                publicDetails == null
+                                        ? null
+                                        : publicDetails
+                                        .getRetryAfterSeconds()
+                        )
+                        .technical(
+                                result.details()
+                        )
+                        .truncation(
+                                publicDetails == null
+                                        ? null
+                                        : publicDetails
+                                        .getTruncation()
+                        )
+                        .build();
+
+        if (result.truncated()) {
+            enriched =
+                    ErrorDetails.mergeTruncation(
+                            enriched,
+                            new TruncationInfo(
+                                    false,
+                                    false,
+                                    true,
+                                    false
+                            )
+                    );
+        }
+
+        return enriched;
     }
 
     /**
-     * Не позволяет удалённому сервису включить
-     * technical details, если текущий сервис
-     * сам их запрещает.
+     * Удаляет technical details, полученные
+     * от другого сервиса.
+     *
+     * <p>Удалённый stack trace не должен
+     * автоматически проксироваться клиенту.</p>
      */
-    public ErrorDetails sanitizeRemote(
+    public ErrorDetails publicOnly(
             ErrorDetails existing
     ) {
         if (existing == null) {
             return null;
         }
 
-        if (properties
-                .isIncludeTechnicalDetails()) {
-
-            return existing;
-        }
-
         if (existing.getResource() == null
-                && existing.getViolations().isEmpty()
                 && existing
-                .getRetryAfterSeconds() == null) {
+                .getViolations()
+                .isEmpty()
+                && existing
+                .getRetryAfterSeconds()
+                == null
+                && existing
+                .getTruncation()
+                == null) {
 
             return null;
         }
 
         return ErrorDetails.builder()
-                .resource(existing.getResource())
+                .resource(
+                        existing.getResource()
+                )
                 .violations(
                         existing.getViolations()
                 )
@@ -98,70 +140,107 @@ public final class TechnicalDetailsFactory {
                         existing
                                 .getRetryAfterSeconds()
                 )
+                .truncation(
+                        existing.getTruncation()
+                )
                 .build();
     }
 
-    private TechnicalDetails createTechnicalDetails(
+    private TechnicalResult
+    createTechnicalDetails(
             Throwable throwable
     ) {
-        String exceptionMessage =
-                normalizeTechnicalText(
-                        throwable.getMessage()
-                );
+        boolean truncated = false;
+
+        ErrorDataLimiter.LimitedText
+                exceptionClass =
+                ErrorDataLimiter
+                        .technicalText(
+                                throwable
+                                        .getClass()
+                                        .getName(),
+                                MAX_EXCEPTION_CLASS_LENGTH
+                        );
+
+        if (exceptionClass.truncated()) {
+            truncated = true;
+        }
 
         List<String> stackTrace =
-                properties.isIncludeStackTrace()
-                        ? Arrays.stream(
-                                throwable
-                                        .getStackTrace()
-                        )
-                        .limit(
-                                MAX_STACK_TRACE_LINES
-                        )
-                        .map(
-                                StackTraceElement
-                                        ::toString
-                        )
-                        .map(
-                                TechnicalDetailsFactory
-                                        ::normalizeTechnicalText
-                        )
-                        .toList()
-                        : List.of();
+                List.of();
 
-        return new TechnicalDetails(
-                throwable
-                        .getClass()
-                        .getName(),
-                exceptionMessage,
-                stackTrace
+        if (properties
+                .isIncludeStackTrace()) {
+
+            StackTraceElement[] original =
+                    throwable.getStackTrace();
+
+            int retained =
+                    Math.min(
+                            original.length,
+                            properties
+                                    .getMaxStackTraceLines()
+                    );
+
+            if (original.length > retained) {
+                truncated = true;
+            }
+
+            List<String> lines =
+                    new ArrayList<>(
+                            retained
+                    );
+
+            for (int index = 0;
+                 index < retained;
+                 index++) {
+
+                ErrorDataLimiter.LimitedText
+                        line =
+                        ErrorDataLimiter
+                                .technicalText(
+                                        original[index]
+                                                .toString(),
+                                        properties
+                                                .getMaxTechnicalTextLength()
+                                );
+
+                if (line.truncated()) {
+                    truncated = true;
+                }
+
+                lines.add(
+                        line.value()
+                );
+            }
+
+            stackTrace =
+                    List.copyOf(lines);
+        }
+
+        /*
+         * Throwable.getMessage() намеренно
+         * не отправляется клиенту.
+         *
+         * Полное сообщение остаётся в логах,
+         * потому что logger получает originalCause.
+         */
+        TechnicalDetails details =
+                new TechnicalDetails(
+                        exceptionClass.value(),
+                        null,
+                        stackTrace
+                );
+
+        return new TechnicalResult(
+                details,
+                truncated
         );
     }
 
-    private static String normalizeTechnicalText(
-            String value
+    private record TechnicalResult(
+            TechnicalDetails details,
+            boolean truncated
     ) {
-        if (value == null
-                || value.isBlank()) {
-
-            return null;
-        }
-
-        String normalized = value
-                .replace('\r', ' ')
-                .replace('\n', ' ')
-                .replace('\t', ' ')
-                .trim();
-
-        if (normalized.length()
-                > MAX_TECHNICAL_TEXT_LENGTH) {
-
-            return normalized.substring(
-                    0,
-                    MAX_TECHNICAL_TEXT_LENGTH
-            );
-        }
-
-        return normalized;
     }
 }

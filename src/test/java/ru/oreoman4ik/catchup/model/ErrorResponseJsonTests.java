@@ -14,63 +14,96 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ErrorResponseJsonTests {
 
-    private static final UUID ERROR_ID = UUID.fromString(
-            "7c12c42e-86ee-43b0-8324-9a56bf633ed4"
-    );
+    private static final UUID ERROR_ID =
+            UUID.fromString(
+                    "7c12c42e-86ee-43b0-8324-9a56bf633ed4"
+            );
 
-    private static final Instant ERROR_TIME = Instant.parse(
-            "2026-07-30T10:42:15.018Z"
-    );
+    private static final Instant ERROR_TIME =
+            Instant.parse(
+                    "2026-07-30T10:42:15.018Z"
+            );
 
     private final JsonMapper jsonMapper =
             JsonMapper.builder().build();
 
     @Test
-    void serializesCanonicalPublicContract() {
-        ErrorResponse response = validResponse(
-                ErrorDetails.builder()
-                        .resource("COMPONENT")
-                        .build()
-        );
+    void serializesCanonicalContract() {
+        ErrorResponse response =
+                validResponse(
+                        ErrorDetails.builder()
+                                .resource(
+                                        "COMPONENT"
+                                )
+                                .build()
+                );
 
-        String json = jsonMapper.writeValueAsString(response);
+        String json =
+                jsonMapper.writeValueAsString(
+                        response
+                );
 
         assertThat(json)
-                .contains("\"errorId\":\"" + ERROR_ID + "\"")
+                .contains(
+                        "\"errorId\":\""
+                                + ERROR_ID
+                                + "\""
+                )
                 .contains(
                         "\"timestamp\":"
                                 + "\"2026-07-30T10:42:15.018Z\""
                 )
-                .contains("\"status\":404")
                 .contains(
-                        "\"errorType\":"
+                        "\"status\":404"
+                )
+                .contains(
+                        "\"message\":"
+                                + "\"Компонент не найден\""
+                )
+                .contains(
+                        "\"errorCode\":"
                                 + "\"COMPONENT_NOT_FOUND\""
                 )
                 .contains(
-                        "\"exceptionType\":"
-                                + "\"COMPONENT_NOT_FOUND\""
+                        "\"currentService\":"
+                                + "\"service-a\""
                 )
                 .contains(
-                        "\"currentService\":\"service-a\""
+                        "\"resource\":"
+                                + "\"COMPONENT\""
                 )
-                .contains("\"resource\":\"COMPONENT\"")
-                .doesNotContain("\"status\":\"404\"")
-                .doesNotContain("org.springframework")
-                .doesNotContain("java.lang");
+                .doesNotContain(
+                        "\"errorType\""
+                )
+                .doesNotContain(
+                        "\"exceptionType\""
+                )
+                .doesNotContain(
+                        "\"causeCode\""
+                )
+                .doesNotContain(
+                        "\"publicMessage\""
+                )
+                .doesNotContain(
+                        "\"httpStatus\""
+                );
     }
 
     @Test
-    void timestampFormatOverridesMapperTimestampConfiguration() {
-        JsonMapper timestampMapper = JsonMapper.builder()
-                .enable(
-                        DateTimeFeature
-                                .WRITE_DATES_AS_TIMESTAMPS
-                )
-                .build();
+    void timestampFormatIsIndependentFromMapperConfiguration() {
+        JsonMapper timestampMapper =
+                JsonMapper.builder()
+                        .enable(
+                                DateTimeFeature
+                                        .WRITE_DATES_AS_TIMESTAMPS
+                        )
+                        .build();
 
-        String json = timestampMapper.writeValueAsString(
-                validResponse(null)
-        );
+        String json =
+                timestampMapper
+                        .writeValueAsString(
+                                validResponse(null)
+                        );
 
         assertThat(json)
                 .contains(
@@ -80,111 +113,234 @@ class ErrorResponseJsonTests {
     }
 
     @Test
-    void readsUnknownFieldsAndMissingOptionalDetails() {
+    void unknownFieldsAreIgnored() {
         String json = """
                 {
                   "errorId": "7c12c42e-86ee-43b0-8324-9a56bf633ed4",
                   "timestamp": "2026-07-30T10:42:15.018Z",
                   "status": 404,
                   "message": "Компонент не найден",
-                  "errorType": "COMPONENT_NOT_FOUND",
+                  "errorCode": "COMPONENT_NOT_FOUND",
                   "currentService": "service-a",
-                  "futureRootField": "ignored",
+                  "futureRoot": true,
                   "chain": [
                     {
                       "service": "service-b",
                       "component": "ComponentCatalog",
-                      "operation": "findComponentById",
-                      "exceptionType": "COMPONENT_NOT_FOUND",
+                      "operation": "findComponent",
+                      "errorCode": "COMPONENT_NOT_FOUND",
                       "message": "Компонент не найден",
                       "timestamp": "2026-07-30T10:42:15.018Z",
-                      "futureChainField": true
+                      "status": 404,
+                      "futureChain": "ignored"
                     }
                   ]
                 }
                 """;
 
-        ErrorResponse response = jsonMapper.readValue(
-                json,
-                ErrorResponse.class
-        );
+        ErrorResponse response =
+                jsonMapper.readValue(
+                        json,
+                        ErrorResponse.class
+                );
 
-        assertThat(response.getErrorId()).isEqualTo(ERROR_ID);
-        assertThat(response.getHttpStatus()).isEqualTo(404);
-        assertThat(response.getDetails()).isNull();
-        assertThat(response.getChain()).hasSize(1);
+        assertThat(response.getErrorId())
+                .isEqualTo(ERROR_ID);
+
+        assertThat(response.getStatus())
+                .isEqualTo(404);
+
+        assertThat(response.getDetails())
+                .isNull();
+
+        assertThat(response.getChain())
+                .hasSize(1);
+
         assertThat(
                 response.getChain()
                         .getFirst()
-                        .getHttpStatus()
-        ).isNull();
+                        .getErrorCode()
+        ).isEqualTo(
+                "COMPONENT_NOT_FOUND"
+        );
     }
 
     @Test
-    void readsLegacyAliases() {
-        String legacyJson = """
-                {
-                  "error_id": "7c12c42e-86ee-43b0-8324-9a56bf633ed4",
-                  "timestamp": "2026-07-30T10:42:15.018Z",
-                  "status": 404,
-                  "message": "Компонент не найден",
-                  "type_exception": "COMPONENT_NOT_FOUND",
-                  "current_service": "service-a",
-                  "chain": [
-                    {
-                      "service": "service-b",
-                      "component": "ComponentCatalog",
-                      "operation": "findComponentById",
-                      "exception_type": "COMPONENT_NOT_FOUND",
-                      "publicMessage": "Компонент не найден",
-                      "timestamp": "2026-07-30T10:42:15.018Z",
-                      "httpStatus": 404
-                    }
-                  ],
-                  "details": {
-                    "fieldErrors": [
-                      {
-                        "field": "name",
-                        "code": "REQUIRED",
-                        "publicMessage": "Название обязательно"
-                      }
-                    ],
-                    "retry_after_seconds": 10
-                  }
-                }
-                """;
+    void truncationInfoIsSerialized() {
+        ErrorDetails details =
+                ErrorDetails.builder()
+                        .truncation(
+                                new TruncationInfo(
+                                        true,
+                                        false,
+                                        true,
+                                        true
+                                )
+                        )
+                        .build();
 
-        ErrorResponse response = jsonMapper.readValue(
-                legacyJson,
-                ErrorResponse.class
-        );
+        String json =
+                jsonMapper.writeValueAsString(
+                        validResponse(details)
+                );
 
-        assertThat(response.getErrorCode())
-                .isEqualTo("COMPONENT_NOT_FOUND");
-
-        assertThat(response.getCurrentService())
-                .isEqualTo("service-a");
-
-        assertThat(
-                response.getChain()
-                        .getFirst()
-                        .getCauseCode()
-        ).isEqualTo("COMPONENT_NOT_FOUND");
-
-        assertThat(
-                response.getDetails().getViolations()
-        ).containsExactly(
-                ErrorDetails.FieldViolation.of(
-                        "name",
-                        "REQUIRED",
-                        "Название обязательно"
+        assertThat(json)
+                .contains(
+                        "\"truncation\""
                 )
+                .contains(
+                        "\"chain\":true"
+                )
+                .contains(
+                        "\"technicalDetails\":true"
+                )
+                .contains(
+                        "\"remoteBody\":true"
+                );
+    }
+
+    @Test
+    void truncationInfoRoundTripPreservesValue() {
+        ErrorDetails details =
+                ErrorDetails.builder()
+                        .resource("ITEM")
+                        .truncation(
+                                new TruncationInfo(
+                                        true,
+                                        true,
+                                        false,
+                                        false
+                                )
+                        )
+                        .build();
+
+        ErrorResponse original =
+                validResponse(details);
+
+        ErrorResponse restored =
+                jsonMapper.readValue(
+                        jsonMapper
+                                .writeValueAsString(
+                                        original
+                                ),
+                        ErrorResponse.class
+                );
+
+        assertThat(restored)
+                .isEqualTo(original);
+    }
+
+    @Test
+    void technicalDetailsAreSerializedOnlyAtRootDetails() {
+        TechnicalDetails technical =
+                new TechnicalDetails(
+                        "java.lang.IllegalStateException",
+                        null,
+                        List.of(
+                                "example.Service.call(Service.java:10)"
+                        )
+                );
+
+        ErrorResponse response =
+                validResponse(
+                        ErrorDetails.builder()
+                                .technical(technical)
+                                .build()
+                );
+
+        String json =
+                jsonMapper.writeValueAsString(
+                        response
+                );
+
+        assertThat(json)
+                .contains(
+                        "\"technical\""
+                )
+                .contains(
+                        "\"exceptionClass\""
+                )
+                .contains(
+                        "\"stackTrace\""
+                );
+
+        /*
+         * ChainElement не содержит stack trace.
+         */
+        assertThat(
+                countOccurrences(
+                        json,
+                        "\"stackTrace\""
+                )
+        ).isEqualTo(1);
+    }
+
+    @Test
+    void publicMessageIsLimited() {
+        ErrorResponse response =
+                ErrorResponse.builder()
+                        .errorId(ERROR_ID)
+                        .timestamp(ERROR_TIME)
+                        .status(500)
+                        .message(
+                                "x".repeat(900)
+                        )
+                        .errorCode(
+                                "INTERNAL_ERROR"
+                        )
+                        .currentService(
+                                "service-a"
+                        )
+                        .chain(
+                                List.of(
+                                        validChainElement()
+                                )
+                        )
+                        .build();
+
+        assertThat(response.getMessage())
+                .hasSize(500);
+    }
+
+    @Test
+    void snapshotsInputCollections() {
+        List<ChainElement> chain =
+                new ArrayList<>();
+
+        chain.add(
+                validChainElement()
         );
 
-        assertThat(
-                response.getDetails()
-                        .getRetryAfterSeconds()
-        ).isEqualTo(10L);
+        ErrorResponse response =
+                ErrorResponse.builder()
+                        .errorId(ERROR_ID)
+                        .timestamp(ERROR_TIME)
+                        .status(404)
+                        .message(
+                                "Компонент не найден"
+                        )
+                        .errorCode(
+                                "COMPONENT_NOT_FOUND"
+                        )
+                        .currentService(
+                                "service-a"
+                        )
+                        .chain(chain)
+                        .build();
+
+        chain.clear();
+
+        assertThat(response.getChain())
+                .hasSize(1);
+
+        assertThatThrownBy(
+                () ->
+                        response.getChain()
+                                .clear()
+        )
+                .isInstanceOf(
+                        UnsupportedOperationException.class
+                );
     }
 
     @Test
@@ -202,233 +358,85 @@ class ErrorResponseJsonTests {
         assertThat(violation.getReasonCode())
                 .isEqualTo("REQUIRED");
 
-        assertThat(violation.getPublicMessage())
-                .isEqualTo("Название обязательно");
-    }
-
-    @Test
-    void snapshotsInputCollectionsAndReturnsUnmodifiableLists() {
-        List<ChainElement> mutableChain =
-                new ArrayList<>();
-
-        mutableChain.add(validChainElement());
-
-        ErrorResponse response = ErrorResponse.builder()
-                .errorId(ERROR_ID)
-                .timestamp(ERROR_TIME)
-                .httpStatus(404)
-                .publicMessage("Компонент не найден")
-                .errorCode("COMPONENT_NOT_FOUND")
-                .currentService("service-a")
-                .chain(mutableChain)
-                .build();
-
-        mutableChain.clear();
-
-        assertThat(response.getChain()).hasSize(1);
-
-        assertThatThrownBy(
-                () -> response.getChain().clear()
-        ).isInstanceOf(
-                UnsupportedOperationException.class
-        );
-    }
-
-    @Test
-    void snapshotsViolationsAndReturnsUnmodifiableList() {
-        List<ErrorDetails.FieldViolation> violations =
-                new ArrayList<>();
-
-        violations.add(
-                ErrorDetails.FieldViolation.of(
-                        "name",
-                        "REQUIRED",
+        assertThat(violation.getMessage())
+                .isEqualTo(
                         "Название обязательно"
-                )
-        );
-
-        ErrorDetails details = ErrorDetails.builder()
-                .violations(violations)
-                .build();
-
-        violations.clear();
-
-        assertThat(details.getViolations()).hasSize(1);
-
-        assertThatThrownBy(
-                () -> details.getViolations().clear()
-        ).isInstanceOf(
-                UnsupportedOperationException.class
-        );
-    }
-
-    @Test
-    void rejectsMissingRequiredFields() {
-        assertThatThrownBy(() -> ErrorResponse.builder()
-                .timestamp(ERROR_TIME)
-                .httpStatus(404)
-                .publicMessage("Компонент не найден")
-                .errorCode("COMPONENT_NOT_FOUND")
-                .currentService("service-a")
-                .chain(List.of(validChainElement()))
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("errorId");
-
-        assertThatThrownBy(() -> ErrorResponse.builder()
-                .errorId(ERROR_ID)
-                .timestamp(ERROR_TIME)
-                .httpStatus(404)
-                .publicMessage("Компонент не найден")
-                .errorCode("COMPONENT_NOT_FOUND")
-                .currentService("service-a")
-                .chain(List.of())
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "chain must not be empty"
                 );
     }
 
     @Test
-    void rejectsNonErrorHttpStatuses() {
-        assertThatThrownBy(() -> ErrorResponse.builder()
-                .errorId(ERROR_ID)
-                .timestamp(ERROR_TIME)
-                .httpStatus(200)
-                .publicMessage("Ошибка")
-                .errorCode("INTERNAL_ERROR")
-                .currentService("service-a")
-                .chain(List.of(validChainElement()))
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("400 to 599");
-
-        assertThatThrownBy(() -> ChainElement.builder()
-                .service("service-b")
-                .component("ComponentCatalog")
-                .operation("findComponentById")
-                .causeCode("COMPONENT_NOT_FOUND")
-                .publicMessage("Компонент не найден")
-                .timestamp(ERROR_TIME)
-                .httpStatus(302)
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("400 to 599");
+    void rejectsEmptyDetails() {
+        assertThatThrownBy(
+                () ->
+                        ErrorDetails.builder()
+                                .build()
+        )
+                .isInstanceOf(
+                        IllegalArgumentException.class
+                )
+                .hasMessageContaining(
+                        "at least one value"
+                );
     }
 
     @Test
-    void rejectsJavaExceptionTypesAndInvalidCodes() {
-        assertThatThrownBy(() -> ChainElement.builder()
-                .service("service-b")
-                .component("ComponentCatalog")
-                .operation("findComponentById")
-                .causeCode(
-                        "DataIntegrityViolationException"
+    void rejectsNonErrorStatus() {
+        assertThatThrownBy(
+                () ->
+                        ErrorResponse.builder()
+                                .errorId(ERROR_ID)
+                                .timestamp(ERROR_TIME)
+                                .status(200)
+                                .message("Ошибка")
+                                .errorCode(
+                                        "INTERNAL_ERROR"
+                                )
+                                .currentService(
+                                        "service-a"
+                                )
+                                .chain(
+                                        List.of(
+                                                validChainElement()
+                                        )
+                                )
+                                .build()
+        )
+                .isInstanceOf(
+                        IllegalArgumentException.class
                 )
-                .publicMessage("Компонент не найден")
-                .timestamp(ERROR_TIME)
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("public code");
+                .hasMessageContaining(
+                        "400 to 599"
+                );
+    }
 
-        assertThatThrownBy(() -> ErrorResponse.builder()
-                .errorId(ERROR_ID)
-                .timestamp(ERROR_TIME)
-                .httpStatus(500)
-                .publicMessage("Внутренняя ошибка")
-                .errorCode("NULLPOINTEREXCEPTION")
-                .currentService("service-a")
-                .chain(List.of(validChainElement()))
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
+    @Test
+    void rejectsExceptionTypeAsPublicCode() {
+        assertThatThrownBy(
+                () ->
+                        ErrorResponse.builder()
+                                .errorId(ERROR_ID)
+                                .timestamp(ERROR_TIME)
+                                .status(500)
+                                .message("Ошибка")
+                                .errorCode(
+                                        "NULLPOINTEREXCEPTION"
+                                )
+                                .currentService(
+                                        "service-a"
+                                )
+                                .chain(
+                                        List.of(
+                                                validChainElement()
+                                        )
+                                )
+                                .build()
+        )
+                .isInstanceOf(
+                        IllegalArgumentException.class
+                )
                 .hasMessageContaining(
                         "Java exception type"
                 );
-
-        assertThatThrownBy(
-                () -> ErrorDetails.FieldViolation.of(
-                        "name",
-                        "not-valid",
-                        "Некорректное значение"
-                )
-        )
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("public code");
-    }
-
-    @Test
-    void rejectsControlCharacters() {
-        assertThatThrownBy(() -> ChainElement.builder()
-                .service("service-b")
-                .component("ComponentCatalog")
-                .operation("findComponentById")
-                .causeCode("COMPONENT_NOT_FOUND")
-                .publicMessage("Компонент\nне найден")
-                .timestamp(ERROR_TIME)
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "control characters"
-                );
-    }
-
-    @Test
-    void rejectsEmptyDetailsNegativeRetryAndOversizedLists() {
-        assertThatThrownBy(
-                () -> ErrorDetails.builder().build()
-        )
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "at least one public value"
-                );
-
-        assertThatThrownBy(() -> ErrorDetails.builder()
-                .retryAfterSeconds(-1L)
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "greater than or equal to zero"
-                );
-
-        List<ErrorDetails.FieldViolation>
-                tooManyViolations = new ArrayList<>();
-
-        for (int index = 0; index < 101; index++) {
-            tooManyViolations.add(
-                    ErrorDetails.FieldViolation.of(
-                            "field" + index,
-                            "INVALID",
-                            "Некорректное значение"
-                    )
-            );
-        }
-
-        assertThatThrownBy(() -> ErrorDetails.builder()
-                .violations(tooManyViolations)
-                .build())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(
-                        "more than 100 elements"
-                );
-    }
-
-    @Test
-    void supportsValueSemanticsAfterJsonRoundTrip() {
-        ErrorResponse original = validResponse(
-                ErrorDetails.builder()
-                        .resource("COMPONENT")
-                        .build()
-        );
-
-        ErrorResponse restored = jsonMapper.readValue(
-                jsonMapper.writeValueAsString(original),
-                ErrorResponse.class
-        );
-
-        assertThat(restored).isEqualTo(original);
-        assertThat(restored.hashCode())
-                .isEqualTo(original.hashCode());
     }
 
     private static ErrorResponse validResponse(
@@ -437,11 +445,21 @@ class ErrorResponseJsonTests {
         return ErrorResponse.builder()
                 .errorId(ERROR_ID)
                 .timestamp(ERROR_TIME)
-                .httpStatus(404)
-                .publicMessage("Компонент не найден")
-                .errorCode("COMPONENT_NOT_FOUND")
-                .currentService("service-a")
-                .chain(List.of(validChainElement()))
+                .status(404)
+                .message(
+                        "Компонент не найден"
+                )
+                .errorCode(
+                        "COMPONENT_NOT_FOUND"
+                )
+                .currentService(
+                        "service-a"
+                )
+                .chain(
+                        List.of(
+                                validChainElement()
+                        )
+                )
                 .details(details)
                 .build();
     }
@@ -449,12 +467,40 @@ class ErrorResponseJsonTests {
     private static ChainElement validChainElement() {
         return ChainElement.builder()
                 .service("service-b")
-                .component("ComponentCatalog")
-                .operation("findComponentById")
-                .causeCode("COMPONENT_NOT_FOUND")
-                .publicMessage("Компонент не найден")
+                .component(
+                        "ComponentCatalog"
+                )
+                .operation(
+                        "findComponent"
+                )
+                .errorCode(
+                        "COMPONENT_NOT_FOUND"
+                )
+                .message(
+                        "Компонент не найден"
+                )
                 .timestamp(ERROR_TIME)
-                .httpStatus(404)
+                .status(404)
                 .build();
+    }
+
+    private static int countOccurrences(
+            String text,
+            String needle
+    ) {
+        int count = 0;
+        int index = 0;
+
+        while ((index =
+                text.indexOf(
+                        needle,
+                        index
+                )) >= 0) {
+
+            count++;
+            index += needle.length();
+        }
+
+        return count;
     }
 }

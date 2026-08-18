@@ -3,14 +3,14 @@ package ru.oreoman4ik.catchup.web;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
-import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
+import ru.oreoman4ik.catchup.autoconfigure.UnifiedErrorAutoConfiguration;
 
 import static org.springframework.test.web.servlet.request
         .MockMvcRequestBuilders.post;
@@ -29,10 +29,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                     "spring.application.name=test-service"
             }
     )
-    @Import({
-            UnifiedGlobalExceptionHandler.class,
-            OutgoingHttpExceptionMapper.class
-    })
+    @ImportAutoConfiguration(
+            UnifiedErrorAutoConfiguration.class
+    )
     class ProblemDetailsEnabled {
 
         @Autowired
@@ -42,7 +41,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
         void libraryFormatWins()
                 throws Exception {
 
-            assertLibraryFormat(mockMvc);
+            assertLibraryFormat(
+                    mockMvc
+            );
         }
     }
 
@@ -54,7 +55,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                     "spring.application.name=test-service"
             }
     )
-    @Import(UnifiedGlobalExceptionHandler.class)
+    @ImportAutoConfiguration(
+            UnifiedErrorAutoConfiguration.class
+    )
     class ProblemDetailsDisabled {
 
         @Autowired
@@ -64,21 +67,30 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
         void libraryFormatIsStillUsed()
                 throws Exception {
 
-            assertLibraryFormat(mockMvc);
+            assertLibraryFormat(
+                    mockMvc
+            );
         }
     }
 
     private static void assertLibraryFormat(
             MockMvc mockMvc
     ) throws Exception {
+
         mockMvc.perform(
-                        post("/problem-details-test")
+                        post(
+                                "/problem-details-test"
+                        )
                                 .contentType(
                                         MediaType.APPLICATION_JSON
                                 )
-                                .content("{broken-json")
+                                .content(
+                                        "{broken-json"
+                                )
                 )
-                .andExpect(status().isBadRequest())
+                .andExpect(
+                        status().isBadRequest()
+                )
                 .andExpect(
                         jsonPath("$.status")
                                 .value(400)
@@ -97,10 +109,6 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                         jsonPath("$.chain")
                                 .isArray()
                 )
-                /*
-                 * Стандартного ProblemDetail-контракта
-                 * вместо нашего ответа быть не должно.
-                 */
                 .andExpect(
                         jsonPath("$.title")
                                 .doesNotExist()
@@ -114,7 +122,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
     @RestController
     static class TestController {
 
-        @PostMapping("/problem-details-test")
+        @PostMapping(
+                "/problem-details-test"
+        )
         String test(
                 @RequestBody Request request
         ) {

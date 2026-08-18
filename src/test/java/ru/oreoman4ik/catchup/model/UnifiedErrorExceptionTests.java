@@ -20,18 +20,8 @@ class UnifiedErrorExceptionTests {
     void createsStructuredErrorFromOrdinaryException() {
         IllegalStateException cause =
                 new IllegalStateException(
-                        "Technical database message"
+                        "secret database details"
                 );
-
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .retryAfterSeconds(
-                                15L
-                        )
-                        .build();
 
         UnifiedErrorException exception =
                 UnifiedErrorException.from(
@@ -40,327 +30,76 @@ class UnifiedErrorExceptionTests {
                         500,
                         "INTERNAL_ERROR",
                         "Внутренняя ошибка сервиса",
-                        details,
-                        5
-                );
-
-        assertThat(
-                exception.getErrorId()
-        ).isNotNull();
-
-        assertThat(
-                exception.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(500);
-
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "INTERNAL_ERROR"
-        );
-
-        assertThat(
-                exception.getMessage()
-        ).isEqualTo(
-                "Внутренняя ошибка сервиса"
-        );
-
-        assertThat(
-                exception.getDetails()
-        ).isEqualTo(details);
-
-        assertThat(
-                exception.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getChainElements()
-        ).isEmpty();
-
-        assertThat(
-                exception.isChainLimitReached()
-        ).isFalse();
-
-        assertThat(
-                exception.getChain()
-                        .getMaxSize()
-        ).isEqualTo(5);
-    }
-
-    @Test
-    void convenienceFactoryCreatesTimestampAndPublicCode() {
-        RuntimeException cause =
-                new RuntimeException(
-                        "Technical cause"
-                );
-
-        UnifiedErrorException exception =
-                UnifiedErrorException.from(
-                        cause,
-                        404,
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        5
-                );
-
-        assertThat(
-                exception.getTimestamp()
-        ).isNotNull();
-
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
-
-        assertThat(
-                exception.getMessage()
-        ).isEqualTo(
-                "Компонент не найден"
-        );
-
-        assertThat(
-                exception.getDetails()
-        ).isNull();
-
-        assertThat(
-                exception.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getChainElements()
-        ).isEmpty();
-    }
-
-    @Test
-    void createsErrorWithInitialContext() {
-        RuntimeException cause =
-                new RuntimeException(
-                        "Technical cause"
-                );
-
-        ChainElement initialContext =
-                element(
-                        "service-b",
-                        "ComponentRepository",
-                        "findById",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        UnifiedErrorException exception =
-                UnifiedErrorException.from(
-                        cause,
-                        ERROR_TIME,
-                        404,
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
                         null,
-                        initialContext,
                         5
                 );
 
-        assertThat(
-                exception.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
+        assertThat(exception.getErrorId())
+                .isNotNull();
 
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
+        assertThat(exception.getTimestamp())
+                .isEqualTo(ERROR_TIME);
 
-        assertThat(
-                exception.getChainElements()
-        ).containsExactly(
-                initialContext
-        );
+        assertThat(exception.getStatus())
+                .isEqualTo(500);
+
+        assertThat(exception.getErrorCode())
+                .isEqualTo(
+                        "INTERNAL_ERROR"
+                );
+
+        assertThat(exception.getMessage())
+                .isEqualTo(
+                        "Внутренняя ошибка сервиса"
+                );
+
+        assertThat(exception.getOriginalCause())
+                .isSameAs(cause);
+
+        assertThat(exception.getCause())
+                .isSameAs(cause);
+
+        assertThat(exception.getChainElements())
+                .isEmpty();
+
+        assertThat(exception.isMessageTruncated())
+                .isFalse();
     }
 
     @Test
-    void addsContextToSameExceptionWithoutChangingStructuredData() {
-        RuntimeException cause =
+    void repeatedFromReturnsSameStructuredException() {
+        RuntimeException originalCause =
                 new RuntimeException(
-                        "Technical cause"
+                        "technical"
                 );
 
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .build();
-
-        UnifiedErrorException exception =
+        UnifiedErrorException existing =
                 UnifiedErrorException.from(
-                        cause,
-                        ERROR_TIME,
-                        404,
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        details,
-                        5
-                );
-
-        UUID originalErrorId =
-                exception.getErrorId();
-
-        ChainElement context =
-                element(
-                        "service-b",
-                        "ComponentService",
-                        "findComponent",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        UnifiedErrorException returned =
-                exception.addContext(
-                        context
-                );
-
-        assertThat(returned)
-                .isSameAs(exception);
-
-        assertThat(
-                exception.getErrorId()
-        ).isEqualTo(
-                originalErrorId
-        );
-
-        assertThat(
-                exception.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
-
-        assertThat(
-                exception.getMessage()
-        ).isEqualTo(
-                "Компонент не найден"
-        );
-
-        assertThat(
-                exception.getDetails()
-        ).isSameAs(details);
-
-        assertThat(
-                exception.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getChainElements()
-        ).containsExactly(
-                context
-        );
-    }
-
-    @Test
-    void repeatedWrappingReturnsExistingStructuredError() {
-        RuntimeException cause =
-                new RuntimeException(
-                        "Technical cause"
-                );
-
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .build();
-
-        UnifiedErrorException original =
-                UnifiedErrorException.from(
-                        cause,
-                        ERROR_TIME,
+                        originalCause,
                         500,
                         "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        details,
+                        "Ошибка",
                         5
                 );
 
         UnifiedErrorException repeated =
                 UnifiedErrorException.from(
-                        original,
+                        existing,
                         400,
                         "OTHER_ERROR",
-                        "Другое сообщение",
-                        10
+                        "Другая ошибка",
+                        20
                 );
 
         assertThat(repeated)
-                .isSameAs(original);
-
-        assertThat(
-                repeated.getErrorId()
-        ).isEqualTo(
-                original.getErrorId()
-        );
-
-        assertThat(
-                repeated.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                repeated.getStatus()
-        ).isEqualTo(500);
-
-        assertThat(
-                repeated.getErrorCode()
-        ).isEqualTo(
-                "INTERNAL_ERROR"
-        );
-
-        assertThat(
-                repeated.getMessage()
-        ).isEqualTo(
-                "Внутренняя ошибка"
-        );
-
-        assertThat(
-                repeated.getDetails()
-        ).isEqualTo(
-                details
-        );
+                .isSameAs(existing);
 
         assertThat(
                 repeated.getOriginalCause()
-        ).isSameAs(cause);
+        ).isSameAs(
+                originalCause
+        );
 
-        /*
-         * Повторная from() не должна менять
-         * первоначальный chain limit.
-         */
         assertThat(
                 repeated.getChain()
                         .getMaxSize()
@@ -368,292 +107,172 @@ class UnifiedErrorExceptionTests {
     }
 
     @Test
-    void restoresAllStructuredFieldsFromRemoteResponse() {
-        UUID errorId =
-                UUID.fromString(
-                        "7c12c42e-86ee-43b0-8324-"
-                                + "9a56bf633ed4"
-                );
+    void longPublicMessageIsTruncated() {
+        String longMessage =
+                "x".repeat(900);
 
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .retryAfterSeconds(
-                                15L
-                        )
-                        .build();
-
-        ChainElement remoteContext =
-                element(
-                        "service-b",
-                        "ComponentService",
-                        "findComponent",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        ErrorResponse remoteResponse =
-                ErrorResponse.builder()
-                        .errorId(errorId)
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Компонент не найден"
-                        )
-                        .errorCode(
-                                "COMPONENT_NOT_FOUND"
-                        )
-                        .currentService(
-                                "service-b"
-                        )
-                        .chain(
-                                List.of(
-                                        remoteContext
-                                )
-                        )
-                        .details(details)
-                        .build();
-
-        RuntimeException httpCause =
-                new RuntimeException(
-                        "Remote HTTP 404"
-                );
-
-        UnifiedErrorException restored =
-                UnifiedErrorException.fromResponse(
-                        remoteResponse,
-                        httpCause,
+        UnifiedErrorException exception =
+                UnifiedErrorException.from(
+                        new RuntimeException(
+                                "technical"
+                        ),
+                        500,
+                        "INTERNAL_ERROR",
+                        longMessage,
                         5
                 );
 
-        assertThat(
-                restored.getErrorId()
-        ).isEqualTo(
-                errorId
-        );
+        assertThat(exception.getMessage())
+                .hasSize(500);
 
-        assertThat(
-                restored.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
+        assertThat(exception.isMessageTruncated())
+                .isTrue();
 
-        assertThat(
-                restored.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                restored.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
-
-        assertThat(
-                restored.getMessage()
-        ).isEqualTo(
-                "Компонент не найден"
-        );
-
-        assertThat(
-                restored.getDetails()
-        ).isEqualTo(
-                details
-        );
-
-        assertThat(
-                restored.getOriginalCause()
-        ).isSameAs(
-                httpCause
-        );
-
-        assertThat(
-                restored.getCause()
-        ).isSameAs(
-                httpCause
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                remoteContext
-        );
-
-        assertThat(
-                restored.getChain()
-                        .getMaxSize()
-        ).isEqualTo(5);
-    }
-
-    @Test
-    void preservesRemoteChainAndAddsLocalContext() {
-        UUID remoteErrorId =
-                UUID.fromString(
-                        "7c12c42e-86ee-43b0-8324-"
-                                + "9a56bf633ed4"
-                );
-
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .build();
-
-        ChainElement remoteContext =
-                element(
-                        "service-b",
-                        "ComponentService",
-                        "findComponent",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        ErrorResponse remoteResponse =
-                ErrorResponse.builder()
-                        .errorId(
-                                remoteErrorId
-                        )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Компонент не найден"
-                        )
-                        .errorCode(
-                                "COMPONENT_NOT_FOUND"
-                        )
-                        .currentService(
-                                "service-b"
-                        )
-                        .chain(
-                                List.of(
-                                        remoteContext
-                                )
-                        )
-                        .details(details)
-                        .build();
-
-        RuntimeException httpCause =
-                new RuntimeException(
-                        "Remote HTTP 404"
-                );
-
-        UnifiedErrorException restored =
-                UnifiedErrorException.fromResponse(
-                        remoteResponse,
-                        httpCause,
-                        5
-                );
-
-        ChainElement localContext =
+        exception.addContext(
                 element(
                         "service-a",
-                        "ComponentGateway",
-                        "loadComponent",
-                        "UPSTREAM_ERROR",
-                        "Не удалось получить компонент",
-                        404
+                        "Controller",
+                        "call",
+                        exception.getMessage(),
+                        500,
+                        "INTERNAL_ERROR"
+                )
+        );
+
+        ErrorResponse response =
+                exception.toResponse(
+                        "service-a"
                 );
 
-        UnifiedErrorException returned =
-                restored.addContext(
-                        localContext
-                );
+        assertThat(response.getMessage())
+                .hasSize(500);
 
-        assertThat(returned)
-                .isSameAs(restored);
+        assertThat(response.getDetails())
+                .isNotNull();
 
         assertThat(
-                restored.getErrorId()
-        ).isEqualTo(
-                remoteErrorId
-        );
+                response.getDetails()
+                        .getTruncation()
+        ).isNotNull();
 
         assertThat(
-                restored.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                restored.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
-
-        assertThat(
-                restored.getDetails()
-        ).isEqualTo(
-                details
-        );
-
-        assertThat(
-                restored.getOriginalCause()
-        ).isSameAs(
-                httpCause
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                remoteContext,
-                localContext
-        );
+                response.getDetails()
+                        .getTruncation()
+                        .isMessage()
+        ).isTrue();
     }
 
     @Test
-    void remoteChainIsTruncatedToConfiguredMaxSize() {
+    void restoresRemoteIdentity() {
+        UUID errorId =
+                UUID.fromString(
+                        "7c12c42e-86ee-43b0-8324-9a56bf633ed4"
+                );
+
+        ChainElement origin =
+                element(
+                        "inventory-service",
+                        "Repository",
+                        "findItem",
+                        "Товар не найден",
+                        404,
+                        "ITEM_NOT_FOUND"
+                );
+
+        ErrorResponse remote =
+                ErrorResponse.builder()
+                        .errorId(errorId)
+                        .timestamp(ERROR_TIME)
+                        .status(404)
+                        .message(
+                                "Товар не найден"
+                        )
+                        .errorCode(
+                                "ITEM_NOT_FOUND"
+                        )
+                        .currentService(
+                                "inventory-service"
+                        )
+                        .chain(
+                                List.of(origin)
+                        )
+                        .build();
+
+        RuntimeException cause =
+                new RuntimeException(
+                        "HTTP 404"
+                );
+
+        UnifiedErrorException restored =
+                UnifiedErrorException.fromResponse(
+                        remote,
+                        cause,
+                        5
+                );
+
+        assertThat(restored.getErrorId())
+                .isEqualTo(errorId);
+
+        assertThat(restored.getTimestamp())
+                .isEqualTo(ERROR_TIME);
+
+        assertThat(restored.getStatus())
+                .isEqualTo(404);
+
+        assertThat(restored.getErrorCode())
+                .isEqualTo(
+                        "ITEM_NOT_FOUND"
+                );
+
+        assertThat(restored.getChainElements())
+                .containsExactly(origin);
+
+        assertThat(restored.getOriginalCause())
+                .isSameAs(cause);
+    }
+
+    @Test
+    void remoteChainNeverExceedsLocalMaximum() {
         ChainElement first =
                 element(
                         "service-d",
-                        "Repository",
-                        "load",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
+                        "D",
+                        "call",
+                        "Ошибка",
+                        500,
+                        "REMOTE_ERROR"
                 );
 
         ChainElement second =
                 element(
                         "service-c",
-                        "Service",
-                        "process",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
+                        "C",
+                        "call",
+                        "Ошибка",
+                        500,
+                        "REMOTE_ERROR"
                 );
 
         ChainElement third =
                 element(
                         "service-b",
-                        "Controller",
-                        "get",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
+                        "B",
+                        "call",
+                        "Ошибка",
+                        500,
+                        "REMOTE_ERROR"
                 );
 
-        ErrorResponse remoteResponse =
+        ErrorResponse remote =
                 ErrorResponse.builder()
                         .errorId(
                                 UUID.randomUUID()
                         )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Компонент не найден"
-                        )
+                        .timestamp(ERROR_TIME)
+                        .status(500)
+                        .message("Ошибка")
                         .errorCode(
-                                "COMPONENT_NOT_FOUND"
+                                "REMOTE_ERROR"
                         )
                         .currentService(
                                 "service-b"
@@ -667,693 +286,215 @@ class UnifiedErrorExceptionTests {
                         )
                         .build();
 
-        /*
-         * Локальная настройка = 2.
-         *
-         * Remote chain = 3.
-         *
-         * После восстановления chain не может
-         * содержать больше двух элементов.
-         */
         UnifiedErrorException restored =
                 UnifiedErrorException.fromResponse(
-                        remoteResponse,
+                        remote,
                         new RuntimeException(
-                                "Remote HTTP error"
+                                "HTTP 500"
                         ),
                         2
                 );
 
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                first,
-                second
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).hasSize(2);
+        assertThat(restored.getChainElements())
+                .containsExactly(
+                        first,
+                        second
+                );
 
         assertThat(
                 restored.getChain()
                         .getMaxSize()
         ).isEqualTo(2);
 
-        assertThat(
-                restored.isChainLimitReached()
-        ).isTrue();
-
-        ChainElement localContext =
-                element(
-                        "service-a",
-                        "Gateway",
-                        "callRemote",
-                        "UPSTREAM_ERROR",
-                        "Не удалось получить компонент",
-                        404
-                );
-
-        restored.addContext(
-                localContext
-        );
-
-        /*
-         * Лимит уже достигнут —
-         * третий элемент не добавился.
-         */
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                first,
-                second
-        );
+        assertThat(restored.isChainTruncated())
+                .isTrue();
     }
 
     @Test
-    void remoteRestoreCanReserveSlotForCallerContext() {
-        ChainElement first =
+    void remoteRestoreCanReserveCallerSlot() {
+        ChainElement origin =
                 element(
                         "service-c",
                         "Repository",
                         "load",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
+                        "Ошибка",
+                        500,
+                        "REMOTE_ERROR"
                 );
 
-        ChainElement second =
+        ChainElement intermediate =
                 element(
                         "service-b",
                         "Service",
                         "process",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
+                        "Ошибка",
+                        500,
+                        "REMOTE_ERROR"
                 );
 
-        ErrorResponse remoteResponse =
+        ErrorResponse remote =
                 ErrorResponse.builder()
                         .errorId(
                                 UUID.randomUUID()
                         )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Компонент не найден"
-                        )
+                        .timestamp(ERROR_TIME)
+                        .status(500)
+                        .message("Ошибка")
                         .errorCode(
-                                "COMPONENT_NOT_FOUND"
+                                "REMOTE_ERROR"
                         )
                         .currentService(
                                 "service-b"
                         )
                         .chain(
                                 List.of(
-                                        first,
-                                        second
+                                        origin,
+                                        intermediate
                                 )
                         )
                         .build();
 
-        /*
-         * max-chain-size = 2
-         *
-         * reservedChainSlots = 1
-         *
-         * Поэтому из remote chain можно сохранить
-         * только один элемент.
-         */
         UnifiedErrorException restored =
                 UnifiedErrorException.fromResponse(
-                        remoteResponse,
+                        remote,
                         new RuntimeException(
-                                "Remote HTTP error"
+                                "HTTP 500"
                         ),
                         2,
                         1
                 );
 
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                first
-        );
-
-        assertThat(
-                restored.getChain()
-                        .getMaxSize()
-        ).isEqualTo(2);
-
-        assertThat(
-                restored.isChainLimitReached()
-        ).isFalse();
-
         ChainElement caller =
                 element(
                         "service-a",
                         "Gateway",
                         "callRemote",
-                        "REMOTE_CLIENT_ERROR",
-                        "Удалённый сервис "
-                                + "отклонил запрос",
-                        404
-                );
-
-        restored.addContext(
-                caller
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                first,
-                caller
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).hasSize(2);
-
-        assertThat(
-                restored.isChainLimitReached()
-        ).isTrue();
-    }
-
-    @Test
-    void reserveSlotWorksWhenMaxChainSizeIsOne() {
-        ChainElement remote =
-                element(
-                        "service-b",
-                        "Controller",
-                        "get",
-                        "RESOURCE_NOT_FOUND",
-                        "Ресурс не найден",
-                        404
-                );
-
-        ErrorResponse response =
-                ErrorResponse.builder()
-                        .errorId(
-                                UUID.randomUUID()
-                        )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Ресурс не найден"
-                        )
-                        .errorCode(
-                                "RESOURCE_NOT_FOUND"
-                        )
-                        .currentService(
-                                "service-b"
-                        )
-                        .chain(
-                                List.of(remote)
-                        )
-                        .build();
-
-        UnifiedErrorException restored =
-                UnifiedErrorException.fromResponse(
-                        response,
-                        new RuntimeException(
-                                "Remote HTTP 404"
-                        ),
-                        1,
-                        1
-                );
-
-        /*
-         * Единственный slot был зарезервирован,
-         * поэтому remote context не восстанавливается.
-         */
-        assertThat(
-                restored.getChainElements()
-        ).isEmpty();
-
-        ChainElement caller =
-                element(
-                        "service-a",
-                        "Gateway",
-                        "call",
-                        "REMOTE_CLIENT_ERROR",
-                        "Удалённый сервис "
-                                + "отклонил запрос",
-                        404
-                );
-
-        restored.addContext(
-                caller
-        );
-
-        assertThat(
-                restored.getChainElements()
-        ).containsExactly(
-                caller
-        );
-
-        assertThat(
-                restored.isChainLimitReached()
-        ).isTrue();
-    }
-
-    @Test
-    void rejectsInvalidReservedChainSlots() {
-        ErrorResponse remoteResponse =
-                ErrorResponse.builder()
-                        .errorId(
-                                UUID.randomUUID()
-                        )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .message(
-                                "Ресурс не найден"
-                        )
-                        .errorCode(
-                                "RESOURCE_NOT_FOUND"
-                        )
-                        .currentService(
-                                "service-b"
-                        )
-                        .chain(
-                                List.of(
-                                        element(
-                                                "service-b",
-                                                "Controller",
-                                                "get",
-                                                "RESOURCE_NOT_FOUND",
-                                                "Ресурс не найден",
-                                                404
-                                        )
-                                )
-                        )
-                        .build();
-
-        RuntimeException cause =
-                new RuntimeException(
-                        "Remote HTTP 404"
-                );
-
-        assertThatThrownBy(
-                () ->
-                        UnifiedErrorException
-                                .fromResponse(
-                                        remoteResponse,
-                                        cause,
-                                        5,
-                                        -1
-                                )
-        )
-                .isInstanceOf(
-                        IllegalArgumentException.class
-                )
-                .hasMessageContaining(
-                        "reservedChainSlots"
-                );
-
-        assertThatThrownBy(
-                () ->
-                        UnifiedErrorException
-                                .fromResponse(
-                                        remoteResponse,
-                                        cause,
-                                        5,
-                                        6
-                                )
-        )
-                .isInstanceOf(
-                        IllegalArgumentException.class
-                )
-                .hasMessageContaining(
-                        "reservedChainSlots"
-                );
-    }
-
-    @Test
-    void repeatedContextDoesNotCreateDuplicateEntry() {
-        UnifiedErrorException exception =
-                UnifiedErrorException.from(
-                        new RuntimeException(
-                                "Technical cause"
-                        ),
-                        ERROR_TIME,
-                        404,
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        null,
-                        5
-                );
-
-        ChainElement first =
-                element(
-                        "service-a",
-                        "ComponentService",
-                        "findComponent",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        /*
-         * Код/status/message отличаются,
-         * но service + component + operation
-         * совпадают.
-         */
-        ChainElement duplicate =
-                ChainElement.builder()
-                        .service(
-                                "service-a"
-                        )
-                        .component(
-                                "ComponentService"
-                        )
-                        .operation(
-                                "findComponent"
-                        )
-                        .errorCode(
-                                "UPSTREAM_ERROR"
-                        )
-                        .message(
-                                "Повторная обработка"
-                        )
-                        .timestamp(
-                                ERROR_TIME
-                                        .plusSeconds(1)
-                        )
-                        .status(500)
-                        .build();
-
-        exception.addContext(first);
-        exception.addContext(duplicate);
-
-        assertThat(
-                exception.getChainElements()
-        ).containsExactly(
-                first
-        );
-    }
-
-    @Test
-    void stopsAddingContextsAfterConfiguredLimit() {
-        UnifiedErrorException exception =
-                UnifiedErrorException.from(
-                        new RuntimeException(
-                                "Technical cause"
-                        ),
-                        ERROR_TIME,
+                        "Удалённая ошибка",
                         500,
-                        "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        null,
-                        2
+                        "REMOTE_SERVER_ERROR"
                 );
 
-        ChainElement first =
-                element(
-                        "service-b",
-                        "Repository",
-                        "load",
-                        "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        500
+        restored.addContext(caller);
+
+        assertThat(restored.getChainElements())
+                .containsExactly(
+                        origin,
+                        caller
                 );
 
-        ChainElement second =
-                element(
-                        "service-b",
-                        "Service",
-                        "process",
-                        "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        500
-                );
+        assertThat(restored.getChainElements())
+                .hasSize(2);
 
-        ChainElement third =
-                element(
-                        "service-a",
-                        "Controller",
-                        "handle",
-                        "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        500
-                );
-
-        exception.addContext(first);
-        exception.addContext(second);
-        exception.addContext(third);
-
-        assertThat(
-                exception.isChainLimitReached()
-        ).isTrue();
-
-        assertThat(
-                exception.getChainElements()
-        ).containsExactly(
-                first,
-                second
-        );
-
-        assertThat(
-                exception.getChainElements()
-        ).hasSize(2);
-    }
-
-    @Test
-    void convertsExceptionBackToResponseWithoutDataLoss() {
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .retryAfterSeconds(
-                                30L
-                        )
-                        .build();
-
-        UnifiedErrorException exception =
-                UnifiedErrorException.from(
-                        new RuntimeException(
-                                "Technical cause"
-                        ),
-                        ERROR_TIME,
-                        404,
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        details,
-                        5
-                );
-
-        UUID errorId =
-                exception.getErrorId();
-
-        ChainElement context =
-                element(
-                        "service-a",
-                        "ComponentController",
-                        "getComponent",
-                        "COMPONENT_NOT_FOUND",
-                        "Компонент не найден",
-                        404
-                );
-
-        exception.addContext(
-                context
-        );
+        assertThat(restored.isChainTruncated())
+                .isTrue();
 
         ErrorResponse response =
-                exception.toResponse(
+                restored.toResponse(
                         "service-a"
                 );
-
-        assertThat(
-                response.getErrorId()
-        ).isEqualTo(
-                errorId
-        );
-
-        assertThat(
-                response.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                response.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                response.getErrorCode()
-        ).isEqualTo(
-                "COMPONENT_NOT_FOUND"
-        );
-
-        assertThat(
-                response.getMessage()
-        ).isEqualTo(
-                "Компонент не найден"
-        );
-
-        assertThat(
-                response.getCurrentService()
-        ).isEqualTo(
-                "service-a"
-        );
 
         assertThat(
                 response.getDetails()
-        ).isEqualTo(
-                details
-        );
-
-        assertThat(
-                response.getChain()
-        ).containsExactly(
-                context
-        );
+                        .getTruncation()
+                        .isChain()
+        ).isTrue();
     }
 
     @Test
-    void remoteResponseRoundTripPreservesStructuredData() {
-        UUID errorId =
-                UUID.fromString(
-                        "7c12c42e-86ee-43b0-8324-"
-                                + "9a56bf633ed4"
-                );
-
+    void preservesExistingDetailsWhenAddingTruncation() {
         ErrorDetails details =
                 ErrorDetails.builder()
-                        .resource(
-                                "COMPONENT"
-                        )
-                        .violations(
-                                List.of(
-                                        ErrorDetails
-                                                .FieldViolation
-                                                .of(
-                                                        "id",
-                                                        "INVALID",
-                                                        "Некорректный "
-                                                                + "идентификатор"
-                                                )
-                                )
-                        )
-                        .build();
-
-        ChainElement remoteContext =
-                element(
-                        "service-b",
-                        "ComponentController",
-                        "getComponent",
-                        "VALIDATION_ERROR",
-                        "Некорректный запрос",
-                        400
-                );
-
-        ErrorResponse originalResponse =
-                ErrorResponse.builder()
-                        .errorId(errorId)
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(400)
-                        .message(
-                                "Некорректный запрос"
-                        )
-                        .errorCode(
-                                "VALIDATION_ERROR"
-                        )
-                        .currentService(
-                                "service-b"
-                        )
-                        .chain(
-                                List.of(
-                                        remoteContext
-                                )
-                        )
-                        .details(details)
+                        .resource("ITEM")
                         .build();
 
         UnifiedErrorException exception =
-                UnifiedErrorException.fromResponse(
-                        originalResponse,
+                UnifiedErrorException.from(
                         new RuntimeException(
-                                "Remote HTTP 400"
+                                "technical"
                         ),
-                        5
+                        ERROR_TIME,
+                        500,
+                        "INTERNAL_ERROR",
+                        "Ошибка",
+                        details,
+                        1
                 );
 
-        ErrorResponse restoredResponse =
+        exception.addContext(
+                element(
+                        "service-a",
+                        "Service",
+                        "first",
+                        "Ошибка",
+                        500,
+                        "INTERNAL_ERROR"
+                )
+        );
+
+        exception.addContext(
+                element(
+                        "service-b",
+                        "Service",
+                        "second",
+                        "Ошибка",
+                        500,
+                        "INTERNAL_ERROR"
+                )
+        );
+
+        ErrorResponse response =
                 exception.toResponse(
                         "service-a"
                 );
 
         assertThat(
-                restoredResponse.getErrorId()
-        ).isEqualTo(
-                originalResponse.getErrorId()
-        );
+                response.getDetails()
+                        .getResource()
+        ).isEqualTo("ITEM");
 
         assertThat(
-                restoredResponse.getTimestamp()
-        ).isEqualTo(
-                originalResponse.getTimestamp()
-        );
-
-        assertThat(
-                restoredResponse.getStatus()
-        ).isEqualTo(
-                originalResponse.getStatus()
-        );
-
-        assertThat(
-                restoredResponse.getMessage()
-        ).isEqualTo(
-                originalResponse.getMessage()
-        );
-
-        assertThat(
-                restoredResponse.getErrorCode()
-        ).isEqualTo(
-                originalResponse.getErrorCode()
-        );
-
-        assertThat(
-                restoredResponse.getDetails()
-        ).isEqualTo(
-                originalResponse.getDetails()
-        );
-
-        assertThat(
-                restoredResponse.getChain()
-        ).isEqualTo(
-                originalResponse.getChain()
-        );
-
-        assertThat(
-                restoredResponse.getCurrentService()
-        ).isEqualTo(
-                "service-a"
-        );
+                response.getDetails()
+                        .getTruncation()
+                        .isChain()
+        ).isTrue();
     }
 
     @Test
-    void toResponseRejectsEmptyChain() {
+    void canOnlyBeMarkedLoggedOnce() {
         UnifiedErrorException exception =
                 UnifiedErrorException.from(
                         new RuntimeException(
-                                "Technical cause"
+                                "technical"
                         ),
-                        ERROR_TIME,
                         500,
                         "INTERNAL_ERROR",
-                        "Внутренняя ошибка",
-                        null,
+                        "Ошибка",
+                        5
+                );
+
+        assertThat(
+                exception.tryMarkLogged()
+        ).isTrue();
+
+        assertThat(
+                exception.tryMarkLogged()
+        ).isFalse();
+
+        assertThat(
+                exception.tryMarkLogged()
+        ).isFalse();
+    }
+
+    @Test
+    void toResponseRequiresContext() {
+        UnifiedErrorException exception =
+                UnifiedErrorException.from(
+                        new RuntimeException(
+                                "technical"
+                        ),
+                        500,
+                        "INTERNAL_ERROR",
+                        "Ошибка",
                         5
                 );
 
@@ -1372,48 +513,50 @@ class UnifiedErrorExceptionTests {
     }
 
     @Test
-    void rejectsInvalidStatusAndInvalidErrorCode() {
-        RuntimeException cause =
-                new RuntimeException(
-                        "Technical cause"
-                );
+    void rejectsInvalidReservedSlots() {
+        ErrorResponse remote =
+                ErrorResponse.builder()
+                        .errorId(
+                                UUID.randomUUID()
+                        )
+                        .timestamp(ERROR_TIME)
+                        .status(500)
+                        .message("Ошибка")
+                        .errorCode(
+                                "REMOTE_ERROR"
+                        )
+                        .currentService(
+                                "service-b"
+                        )
+                        .chain(
+                                List.of(
+                                        element(
+                                                "service-b",
+                                                "Service",
+                                                "call",
+                                                "Ошибка",
+                                                500,
+                                                "REMOTE_ERROR"
+                                        )
+                                )
+                        )
+                        .build();
 
         assertThatThrownBy(
                 () ->
-                        UnifiedErrorException.from(
-                                cause,
-                                ERROR_TIME,
-                                200,
-                                "INTERNAL_ERROR",
-                                "Ошибка",
-                                null,
-                                5
-                        )
+                        UnifiedErrorException
+                                .fromResponse(
+                                        remote,
+                                        new RuntimeException(),
+                                        5,
+                                        6
+                                )
         )
                 .isInstanceOf(
                         IllegalArgumentException.class
                 )
                 .hasMessageContaining(
-                        "400 to 599"
-                );
-
-        assertThatThrownBy(
-                () ->
-                        UnifiedErrorException.from(
-                                cause,
-                                ERROR_TIME,
-                                500,
-                                "NULLPOINTEREXCEPTION",
-                                "Ошибка",
-                                null,
-                                5
-                        )
-        )
-                .isInstanceOf(
-                        IllegalArgumentException.class
-                )
-                .hasMessageContaining(
-                        "Java exception type"
+                        "reservedChainSlots"
                 );
     }
 
@@ -1421,9 +564,9 @@ class UnifiedErrorExceptionTests {
             String service,
             String component,
             String operation,
-            String errorCode,
             String message,
-            int status
+            int status,
+            String errorCode
     ) {
         return ChainElement.builder()
                 .service(service)

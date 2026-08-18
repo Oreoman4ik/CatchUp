@@ -11,147 +11,288 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ExceptionChainTests {
 
-    private static final Instant ERROR_TIME = Instant.parse(
-            "2026-07-31T10:20:30.123Z"
-    );
+    private static final Instant ERROR_TIME =
+            Instant.parse(
+                    "2026-07-31T10:20:30.123Z"
+            );
 
     @Test
-    void addsElementsInCorrectOrderAndPreservesExistingOnes() {
-        ChainElement repository = element(
-                "service-b",
-                "ComponentRepository",
-                "findById",
-                "COMPONENT_NOT_FOUND"
-        );
-
-        ChainElement service = element(
-                "service-b",
-                "ComponentService",
-                "findComponent",
-                "COMPONENT_NOT_FOUND"
-        );
-
-        ChainElement controller = element(
-                "service-a",
-                "ComponentController",
-                "getComponent",
-                "UPSTREAM_ERROR"
-        );
-
-        ExceptionChain original = ExceptionChain.of(
-                List.of(repository),
-                5
-        );
-
-        ExceptionChain updated = original
-                .add(service)
-                .add(controller);
-
-        assertThat(original.getElements())
-                .containsExactly(repository);
-
-        assertThat(updated.getElements())
-                .containsExactly(
-                        repository,
-                        service,
-                        controller
+    void addsElementsInCorrectOrder() {
+        ChainElement repository =
+                element(
+                        "service-c",
+                        "Repository",
+                        "load"
                 );
+
+        ChainElement service =
+                element(
+                        "service-b",
+                        "Service",
+                        "process"
+                );
+
+        ChainElement controller =
+                element(
+                        "service-a",
+                        "Controller",
+                        "get"
+                );
+
+        ExceptionChain original =
+                ExceptionChain.of(
+                        List.of(repository),
+                        5
+                );
+
+        ExceptionChain updated =
+                original
+                        .add(service)
+                        .add(controller);
+
+        assertThat(
+                original.getElements()
+        ).containsExactly(
+                repository
+        );
+
+        assertThat(
+                updated.getElements()
+        ).containsExactly(
+                repository,
+                service,
+                controller
+        );
+
+        assertThat(updated.isTruncated())
+                .isFalse();
     }
 
     @Test
-    void doesNotGrowAfterReachingLimit() {
-        ChainElement first = element(
-                "service-b",
-                "Repository",
-                "load",
-                "RESOURCE_NOT_FOUND"
-        );
-
-        ChainElement second = element(
-                "service-b",
-                "Service",
-                "find",
-                "RESOURCE_NOT_FOUND"
-        );
-
-        ChainElement third = element(
-                "service-a",
-                "Controller",
-                "get",
-                "UPSTREAM_ERROR"
-        );
-
-        ExceptionChain fullChain =
+    void reachingLimitAloneDoesNotMeanTruncation() {
+        ExceptionChain chain =
                 ExceptionChain.empty(2)
-                        .add(first)
-                        .add(second);
+                        .add(
+                                element(
+                                        "service-a",
+                                        "A",
+                                        "first"
+                                )
+                        )
+                        .add(
+                                element(
+                                        "service-b",
+                                        "B",
+                                        "second"
+                                )
+                        );
 
-        ExceptionChain afterExtraElement =
-                fullChain.add(third);
+        assertThat(chain.size())
+                .isEqualTo(2);
 
-        assertThat(fullChain.isLimitReached())
+        assertThat(chain.isLimitReached())
                 .isTrue();
 
-        assertThat(afterExtraElement)
-                .isSameAs(fullChain);
-
-        assertThat(afterExtraElement.getElements())
-                .containsExactly(first, second);
+        /*
+         * Пока ничего не пытались отбросить,
+         * данные не считаются сокращёнными.
+         */
+        assertThat(chain.isTruncated())
+                .isFalse();
     }
 
     @Test
-    void doesNotAddDuplicateProcessingLevel() {
-        ChainElement firstHandling = element(
-                "service-a",
-                "ComponentService",
-                "findComponent",
-                "COMPONENT_NOT_FOUND"
+    void rejectedUniqueElementMarksChainAsTruncated() {
+        ChainElement first =
+                element(
+                        "service-a",
+                        "A",
+                        "first"
+                );
+
+        ChainElement second =
+                element(
+                        "service-b",
+                        "B",
+                        "second"
+                );
+
+        ExceptionChain chain =
+                ExceptionChain.empty(1)
+                        .add(first);
+
+        ExceptionChain truncated =
+                chain.add(second);
+
+        assertThat(truncated.size())
+                .isEqualTo(1);
+
+        assertThat(
+                truncated.getElements()
+        ).containsExactly(
+                first
         );
 
-        ChainElement repeatedHandling =
+        assertThat(truncated.isTruncated())
+                .isTrue();
+
+        assertThat(truncated.isLimitReached())
+                .isTrue();
+    }
+
+    @Test
+    void duplicateLevelDoesNotMarkChainAsTruncated() {
+        ChainElement first =
+                element(
+                        "service-a",
+                        "Service",
+                        "load"
+                );
+
+        ChainElement duplicate =
                 ChainElement.builder()
                         .service("service-a")
-                        .component("ComponentService")
-                        .operation("findComponent")
-                        .causeCode("UPSTREAM_ERROR")
-                        .publicMessage(
-                                "Повторная обработка"
+                        .component("Service")
+                        .operation("load")
+                        .errorCode(
+                                "OTHER_ERROR"
+                        )
+                        .message(
+                                "Другое сообщение"
                         )
                         .timestamp(
                                 ERROR_TIME.plusSeconds(1)
                         )
-                        .httpStatus(500)
+                        .status(500)
                         .build();
 
         ExceptionChain original =
-                ExceptionChain.empty(5)
-                        .add(firstHandling);
+                ExceptionChain.empty(1)
+                        .add(first);
 
         ExceptionChain updated =
-                original.add(repeatedHandling);
+                original.add(duplicate);
 
-        assertThat(updated).isSameAs(original);
-        assertThat(updated.size()).isEqualTo(1);
+        assertThat(updated)
+                .isSameAs(original);
+
+        assertThat(updated.isTruncated())
+                .isFalse();
+
         assertThat(updated.getElements())
-                .containsExactly(firstHandling);
+                .containsExactly(first);
     }
 
     @Test
-    void snapshotsSourceListAndReturnsUnmodifiableElements() {
+    void ofTruncatesOversizedSource() {
+        ChainElement first =
+                element(
+                        "service-a",
+                        "A",
+                        "first"
+                );
+
+        ChainElement second =
+                element(
+                        "service-b",
+                        "B",
+                        "second"
+                );
+
+        ChainElement third =
+                element(
+                        "service-c",
+                        "C",
+                        "third"
+                );
+
+        ExceptionChain chain =
+                ExceptionChain.of(
+                        List.of(
+                                first,
+                                second,
+                                third
+                        ),
+                        2
+                );
+
+        assertThat(chain.size())
+                .isEqualTo(2);
+
+        assertThat(chain.getElements())
+                .containsExactly(
+                        first,
+                        second
+                );
+
+        assertThat(chain.isTruncated())
+                .isTrue();
+
+        assertThat(chain.getMaxSize())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void repeatedCycleCannotGrowChain() {
+        ChainElement first =
+                element(
+                        "service-a",
+                        "ServiceA",
+                        "callB"
+                );
+
+        ChainElement second =
+                element(
+                        "service-b",
+                        "ServiceB",
+                        "callA"
+                );
+
+        ExceptionChain chain =
+                ExceptionChain.empty(10)
+                        .add(first)
+                        .add(second);
+
+        for (int index = 0;
+             index < 100;
+             index++) {
+
+            chain = chain
+                    .add(first)
+                    .add(second);
+        }
+
+        assertThat(chain.size())
+                .isEqualTo(2);
+
+        assertThat(chain.getElements())
+                .containsExactly(
+                        first,
+                        second
+                );
+
+        assertThat(chain.isTruncated())
+                .isFalse();
+    }
+
+    @Test
+    void snapshotsSourceList() {
         List<ChainElement> source =
                 new ArrayList<>();
 
         source.add(
                 element(
-                        "service-b",
+                        "service-a",
                         "Repository",
-                        "load",
-                        "RESOURCE_NOT_FOUND"
+                        "load"
                 )
         );
 
         ExceptionChain chain =
-                ExceptionChain.of(source, 5);
+                ExceptionChain.of(
+                        source,
+                        5
+                );
 
         source.clear();
 
@@ -159,10 +300,13 @@ class ExceptionChainTests {
                 .hasSize(1);
 
         assertThatThrownBy(
-                () -> chain.getElements().clear()
-        ).isInstanceOf(
-                UnsupportedOperationException.class
-        );
+                () ->
+                        chain.getElements()
+                                .clear()
+        )
+                .isInstanceOf(
+                        UnsupportedOperationException.class
+                );
     }
 
     @Test
@@ -173,7 +317,9 @@ class ExceptionChainTests {
                 .isInstanceOf(
                         IllegalArgumentException.class
                 )
-                .hasMessageContaining("1 to 100");
+                .hasMessageContaining(
+                        "1 to 100"
+                );
 
         assertThatThrownBy(
                 () -> ExceptionChain.empty(101)
@@ -181,23 +327,28 @@ class ExceptionChainTests {
                 .isInstanceOf(
                         IllegalArgumentException.class
                 )
-                .hasMessageContaining("1 to 100");
+                .hasMessageContaining(
+                        "1 to 100"
+                );
     }
 
     private static ChainElement element(
             String service,
             String component,
-            String operation,
-            String code
+            String operation
     ) {
         return ChainElement.builder()
                 .service(service)
                 .component(component)
                 .operation(operation)
-                .causeCode(code)
-                .publicMessage("Безопасное сообщение")
+                .errorCode(
+                        "INTERNAL_ERROR"
+                )
+                .message(
+                        "Безопасное сообщение"
+                )
                 .timestamp(ERROR_TIME)
-                .httpStatus(404)
+                .status(500)
                 .build();
     }
 }

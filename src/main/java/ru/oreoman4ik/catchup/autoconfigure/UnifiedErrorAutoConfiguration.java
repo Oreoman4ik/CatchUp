@@ -16,6 +16,9 @@ import ru.oreoman4ik.catchup.config.CurrentServiceName;
 import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
 import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.context.ErrorContextAspect;
+import ru.oreoman4ik.catchup.logging.ErrorLogSink;
+import ru.oreoman4ik.catchup.logging.Slf4jErrorLogSink;
+import ru.oreoman4ik.catchup.logging.UnifiedErrorLogger;
 import ru.oreoman4ik.catchup.web.UnifiedGlobalExceptionHandler;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -43,7 +46,9 @@ import tools.jackson.databind.json.JsonMapper;
 public class UnifiedErrorAutoConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(
+            CurrentServiceName.class
+    )
     CurrentServiceName currentServiceName(
             UnifiedErrorProperties properties,
             Environment environment
@@ -55,7 +60,9 @@ public class UnifiedErrorAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(
+            TechnicalDetailsFactory.class
+    )
     TechnicalDetailsFactory
     technicalDetailsFactory(
             UnifiedErrorProperties properties
@@ -66,18 +73,24 @@ public class UnifiedErrorAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(
+            RemoteErrorResponseDecoder.class
+    )
     RemoteErrorResponseDecoder
     remoteErrorResponseDecoder(
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            UnifiedErrorProperties properties
     ) {
         return new RemoteErrorResponseDecoder(
-                jsonMapper
+                jsonMapper,
+                properties
         );
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(
+            OutgoingHttpExceptionMapper.class
+    )
     OutgoingHttpExceptionMapper
     outgoingHttpExceptionMapper(
             CurrentServiceName
@@ -96,7 +109,30 @@ public class UnifiedErrorAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean({
+            UnifiedErrorLogger.class,
+            ErrorLogSink.class
+    })
+    ErrorLogSink errorLogSink() {
+        return new Slf4jErrorLogSink();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+            UnifiedErrorLogger.class
+    )
+    UnifiedErrorLogger unifiedErrorLogger(
+            ErrorLogSink sink
+    ) {
+        return new UnifiedErrorLogger(
+                sink
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+            ErrorContextAspect.class
+    )
     ErrorContextAspect errorContextAspect(
             CurrentServiceName
                     currentServiceName,
@@ -114,7 +150,9 @@ public class UnifiedErrorAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean
+    @ConditionalOnMissingBean(
+            UnifiedGlobalExceptionHandler.class
+    )
     UnifiedGlobalExceptionHandler
     unifiedGlobalExceptionHandler(
             CurrentServiceName
@@ -122,13 +160,15 @@ public class UnifiedErrorAutoConfiguration {
             UnifiedErrorProperties properties,
             OutgoingHttpExceptionMapper mapper,
             TechnicalDetailsFactory
-                    technicalDetailsFactory
+                    technicalDetailsFactory,
+            UnifiedErrorLogger errorLogger
     ) {
         return new UnifiedGlobalExceptionHandler(
                 currentServiceName,
                 properties,
                 mapper,
-                technicalDetailsFactory
+                technicalDetailsFactory,
+                errorLogger
         );
     }
 }

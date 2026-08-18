@@ -22,6 +22,8 @@ public final class ErrorDetails {
 
     private final TechnicalDetails technical;
 
+    private final TruncationInfo truncation;
+
     @JsonCreator
     private ErrorDetails(
             @JsonProperty("resource")
@@ -34,7 +36,10 @@ public final class ErrorDetails {
             Long retryAfterSeconds,
 
             @JsonProperty("technical")
-            TechnicalDetails technical
+            TechnicalDetails technical,
+
+            @JsonProperty("truncation")
+            TruncationInfo truncation
     ) {
         this.resource =
                 ErrorModelValidation
@@ -60,13 +65,21 @@ public final class ErrorDetails {
 
         this.technical = technical;
 
+        this.truncation =
+                truncation != null
+                        && truncation.isAny()
+                        ? truncation
+                        : null;
+
         if (this.resource == null
                 && this.violations.isEmpty()
                 && this.retryAfterSeconds == null
-                && this.technical == null) {
+                && this.technical == null
+                && this.truncation == null) {
 
             throw new IllegalArgumentException(
-                    "details must contain at least one value"
+                    "details must contain "
+                            + "at least one value"
             );
         }
     }
@@ -78,12 +91,50 @@ public final class ErrorDetails {
                 builder.resource,
                 builder.violations,
                 builder.retryAfterSeconds,
-                builder.technical
+                builder.technical,
+                builder.truncation
         );
     }
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * Добавляет информацию о сокращении,
+     * сохраняя остальные details.
+     */
+    public static ErrorDetails mergeTruncation(
+            ErrorDetails existing,
+            TruncationInfo additional
+    ) {
+        if (additional == null
+                || !additional.isAny()) {
+
+            return existing;
+        }
+
+        if (existing == null) {
+            return ErrorDetails.builder()
+                    .truncation(additional)
+                    .build();
+        }
+
+        TruncationInfo merged =
+                existing.truncation == null
+                        ? additional
+                        : existing.truncation
+                        .merge(additional);
+
+        return ErrorDetails.builder()
+                .resource(existing.resource)
+                .violations(existing.violations)
+                .retryAfterSeconds(
+                        existing.retryAfterSeconds
+                )
+                .technical(existing.technical)
+                .truncation(merged)
+                .build();
     }
 
     @JsonProperty("resource")
@@ -106,8 +157,15 @@ public final class ErrorDetails {
         return technical;
     }
 
+    @JsonProperty("truncation")
+    public TruncationInfo getTruncation() {
+        return truncation;
+    }
+
     @Override
-    public boolean equals(Object object) {
+    public boolean equals(
+            Object object
+    ) {
         if (this == object) {
             return true;
         }
@@ -132,6 +190,10 @@ public final class ErrorDetails {
                 && Objects.equals(
                 technical,
                 that.technical
+        )
+                && Objects.equals(
+                truncation,
+                that.truncation
         );
     }
 
@@ -141,7 +203,8 @@ public final class ErrorDetails {
                 resource,
                 violations,
                 retryAfterSeconds,
-                technical
+                technical,
+                truncation
         );
     }
 
@@ -157,6 +220,8 @@ public final class ErrorDetails {
                 + retryAfterSeconds
                 + ", technical="
                 + technical
+                + ", truncation="
+                + truncation
                 + '}';
     }
 
@@ -170,6 +235,8 @@ public final class ErrorDetails {
         private Long retryAfterSeconds;
 
         private TechnicalDetails technical;
+
+        private TruncationInfo truncation;
 
         private Builder() {
         }
@@ -193,7 +260,6 @@ public final class ErrorDetails {
         ) {
             this.retryAfterSeconds =
                     retryAfterSeconds;
-
             return this;
         }
 
@@ -201,6 +267,13 @@ public final class ErrorDetails {
                 TechnicalDetails technical
         ) {
             this.technical = technical;
+            return this;
+        }
+
+        public Builder truncation(
+                TruncationInfo truncation
+        ) {
+            this.truncation = truncation;
             return this;
         }
 
@@ -298,8 +371,7 @@ public final class ErrorDetails {
             }
 
             if (!(object
-                    instanceof
-                    FieldViolation that)) {
+                    instanceof FieldViolation that)) {
 
                 return false;
             }

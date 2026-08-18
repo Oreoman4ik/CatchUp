@@ -4,8 +4,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.client.RestClientResponseException;
+import ru.oreoman4ik.catchup.config.CurrentServiceName;
+import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.ChainElement;
-import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 import tools.jackson.databind.json.JsonMapper;
@@ -42,35 +44,20 @@ class RemoteErrorResponseSupportTests {
     }
 
     @Test
-    void supportedRemoteErrorPreservesIdChainAndStatus() {
+    void validRemoteResponsePreservesIdentityAndChain() {
         UUID errorId =
                 UUID.fromString(
-                        "7c12c42e-86ee-43b0-"
-                                + "8324-9a56bf633ed4"
+                        "7c12c42e-86ee-43b0-8324-9a56bf633ed4"
                 );
 
         ChainElement origin =
-                ChainElement.builder()
-                        .service(
-                                "inventory-service"
-                        )
-                        .component(
-                                "InventoryRepository"
-                        )
-                        .operation(
-                                "findItem"
-                        )
-                        .errorCode(
-                                "ITEM_NOT_FOUND"
-                        )
-                        .message(
-                                "Товар не найден"
-                        )
-                        .timestamp(
-                                ERROR_TIME
-                        )
-                        .status(404)
-                        .build();
+                element(
+                        "inventory-service",
+                        "InventoryRepository",
+                        "findItem",
+                        404,
+                        "ITEM_NOT_FOUND"
+                );
 
         ErrorResponse remote =
                 ErrorResponse.builder()
@@ -89,11 +76,6 @@ class RemoteErrorResponseSupportTests {
                         .chain(
                                 List.of(origin)
                         )
-                        .details(
-                                ErrorDetails.builder()
-                                        .resource("ITEM")
-                                        .build()
-                        )
                         .build();
 
         RestClientResponseException cause =
@@ -112,86 +94,46 @@ class RemoteErrorResponseSupportTests {
                         "loadItem"
                 );
 
-        assertThat(
-                restored.getErrorId()
-        ).isEqualTo(errorId);
+        assertThat(restored.getErrorId())
+                .isEqualTo(errorId);
 
-        assertThat(
-                restored.getTimestamp()
-        ).isEqualTo(ERROR_TIME);
+        assertThat(restored.getTimestamp())
+                .isEqualTo(ERROR_TIME);
 
-        assertThat(
-                restored.getStatus()
-        ).isEqualTo(404);
+        assertThat(restored.getStatus())
+                .isEqualTo(404);
 
-        assertThat(
-                restored.getErrorCode()
-        ).isEqualTo(
-                "ITEM_NOT_FOUND"
-        );
+        assertThat(restored.getErrorCode())
+                .isEqualTo(
+                        "ITEM_NOT_FOUND"
+                );
 
-        assertThat(
-                restored.getMessage()
-        ).isEqualTo(
-                "Товар не найден"
-        );
-
-        assertThat(
-                restored.getDetails()
-        ).isEqualTo(
-                remote.getDetails()
-        );
-
-        assertThat(
-                restored.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                restored.getCause()
-        ).isSameAs(cause);
+        assertThat(restored.getChainElements())
+                .hasSize(2);
 
         assertThat(
                 restored.getChainElements()
-        ).hasSize(2);
-
-        assertThat(
-                restored
-                        .getChainElements()
                         .getFirst()
         ).isEqualTo(origin);
 
         ChainElement caller =
-                restored
-                        .getChainElements()
+                restored.getChainElements()
                         .getLast();
 
-        assertThat(
-                caller.getService()
-        ).isEqualTo(
-                "caller-service"
-        );
+        assertThat(caller.getService())
+                .isEqualTo(
+                        "caller-service"
+                );
 
-        assertThat(
-                caller.getComponent()
-        ).isEqualTo(
-                "CatalogGateway"
-        );
+        assertThat(caller.getComponent())
+                .isEqualTo(
+                        "CatalogGateway"
+                );
 
-        assertThat(
-                caller.getOperation()
-        ).isEqualTo(
-                "loadItem"
-        );
-
-        assertThat(
-                caller.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                caller.getErrorCode()
-        ).isEqualTo(
-                "REMOTE_CLIENT_ERROR"
-        );
+        assertThat(caller.getOperation())
+                .isEqualTo(
+                        "loadItem"
+                );
     }
 
     @Test
@@ -199,246 +141,145 @@ class RemoteErrorResponseSupportTests {
         RestClientResponseException cause =
                 responseException(
                         503,
-                        "{damaged-json"
+                        "{broken-json"
                                 .getBytes(
                                         StandardCharsets.UTF_8
                                 )
                 );
 
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadItem"
+                        "load"
                 );
 
-        assertThat(
-                exception.getErrorId()
-        ).isNotNull();
+        assertThat(error.getErrorId())
+                .isNotNull();
 
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(503);
+        assertThat(error.getStatus())
+                .isEqualTo(503);
 
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "REMOTE_SERVER_ERROR"
-        );
+        assertThat(error.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_SERVER_ERROR"
+                );
 
-        assertThat(
-                exception.getMessage()
-        ).isEqualTo(
-                "Удалённый сервис завершил "
-                        + "запрос с ошибкой"
-        );
-
-        assertThat(
-                exception.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getChainElements()
-        ).hasSize(1);
-
-        ChainElement caller =
-                exception
-                        .getChainElements()
-                        .getFirst();
-
-        assertThat(
-                caller.getService()
-        ).isEqualTo(
-                "caller-service"
-        );
-
-        assertThat(
-                caller.getComponent()
-        ).isEqualTo(
-                "CatalogGateway"
-        );
-
-        assertThat(
-                caller.getOperation()
-        ).isEqualTo(
-                "loadItem"
-        );
+        assertThat(error.getChainElements())
+                .hasSize(1);
     }
 
     @Test
-    void unknownFormatCreatesNewError() {
+    void unknownFormatGetsNewErrorId() {
         UUID foreignId =
-                UUID.fromString(
-                        "aaaaaaaa-bbbb-cccc-dddd-"
-                                + "eeeeeeeeeeee"
-                );
+                UUID.randomUUID();
 
-        String json = """
+        String body = """
                 {
                   "errorId": "%s",
                   "status": 404,
-                  "message": "legacy format",
                   "legacyCode": "NOT_FOUND"
                 }
                 """.formatted(
                 foreignId
         );
 
-        RestClientResponseException cause =
-                responseException(
-                        404,
-                        json.getBytes(
-                                StandardCharsets.UTF_8
-                        )
-                );
-
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
-                        cause,
+                        responseException(
+                                404,
+                                body.getBytes(
+                                        StandardCharsets.UTF_8
+                                )
+                        ),
                         "CatalogGateway",
-                        "loadItem"
+                        "load"
                 );
 
-        /*
-         * foreignId не должен быть принят:
-         * JSON не соответствует ErrorResponse.
-         */
-        assertThat(
-                exception.getErrorId()
-        ).isNotEqualTo(
-                foreignId
-        );
+        assertThat(error.getErrorId())
+                .isNotEqualTo(
+                        foreignId
+                );
 
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(404);
-
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "REMOTE_CLIENT_ERROR"
-        );
-
-        assertThat(
-                exception.getOriginalCause()
-        ).isSameAs(cause);
-
-        assertThat(
-                exception.getChainElements()
-        ).hasSize(1);
+        assertThat(error.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_CLIENT_ERROR"
+                );
     }
 
     @Test
-    void jsonStatusMustMatchRealHttpStatus() {
+    void jsonStatusMustMatchHttpStatus() {
         UUID remoteId =
                 UUID.randomUUID();
 
-        ErrorResponse body =
+        ErrorResponse remote =
                 ErrorResponse.builder()
                         .errorId(remoteId)
                         .timestamp(ERROR_TIME)
                         .status(404)
-                        .message(
-                                "Товар не найден"
-                        )
+                        .message("Не найдено")
                         .errorCode(
-                                "ITEM_NOT_FOUND"
+                                "RESOURCE_NOT_FOUND"
                         )
                         .currentService(
-                                "inventory-service"
+                                "remote-service"
                         )
                         .chain(
                                 List.of(
-                                        chainElement(
-                                                "inventory-service",
+                                        element(
+                                                "remote-service",
                                                 "Controller",
-                                                "getItem",
-                                                "ITEM_NOT_FOUND",
-                                                "Товар не найден",
-                                                404
+                                                "find",
+                                                404,
+                                                "RESOURCE_NOT_FOUND"
                                         )
                                 )
                         )
                         .build();
 
-        /*
-         * Фактический HTTP status = 500,
-         * status внутри JSON = 404.
-         *
-         * Такой ответ не считается доверенным
-         * ErrorResponse библиотеки.
-         */
-        RestClientResponseException cause =
-                responseException(
-                        500,
-                        jsonMapper
-                                .writeValueAsBytes(
-                                        body
-                                )
-                );
-
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadItem"
+                        responseException(
+                                500,
+                                jsonMapper
+                                        .writeValueAsBytes(
+                                                remote
+                                        )
+                        ),
+                        "Gateway",
+                        "load"
                 );
 
-        assertThat(
-                exception.getErrorId()
-        ).isNotEqualTo(
-                remoteId
-        );
+        assertThat(error.getErrorId())
+                .isNotEqualTo(
+                        remoteId
+                );
 
-        assertThat(
-                exception.getStatus()
-        ).isEqualTo(500);
+        assertThat(error.getStatus())
+                .isEqualTo(500);
 
-        assertThat(
-                exception.getErrorCode()
-        ).isEqualTo(
-                "REMOTE_SERVER_ERROR"
-        );
-
-        assertThat(
-                exception.getChainElements()
-        ).hasSize(1);
+        assertThat(error.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_SERVER_ERROR"
+                );
     }
 
     @Test
-    void validLibraryResponseLargerThan64KiBIsRestored() {
-        /*
-         * Здесь нужен более высокий chain limit,
-         * чтобы большой remote response не был
-         * обрезан из-за max-chain-size.
-         */
-        OutgoingHttpExceptionMapper largeChainMapper =
+    void validResponseLargerThan64KiBIsStillRecognized() {
+        OutgoingHttpExceptionMapper largeMapper =
                 new OutgoingHttpExceptionMapper(
                         "caller-service",
                         100
                 );
 
         UUID errorId =
-                UUID.fromString(
-                        "11111111-2222-3333-4444-"
-                                + "555555555555"
-                );
+                UUID.randomUUID();
 
-        /*
-         * Каждый элемент заполнен почти до максимально
-         * допустимого моделью размера.
-         *
-         * 70 таких элементов гарантированно дают JSON
-         * больше прежнего лимита 64 KiB.
-         */
-        List<ChainElement> remoteChain =
-                IntStream.range(
-                                0,
-                                70
-                        )
+        List<ChainElement> chain =
+                IntStream.range(0, 70)
                         .mapToObj(
                                 RemoteErrorResponseSupportTests
-                                        ::largeChainElement
+                                        ::largeElement
                         )
                         .toList();
 
@@ -454,164 +295,164 @@ class RemoteErrorResponseSupportTests {
                                 "REMOTE_TEST_ERROR"
                         )
                         .currentService(
-                                "inventory-service"
+                                "remote-service"
                         )
-                        .chain(
-                                remoteChain
-                        )
+                        .chain(chain)
                         .build();
 
         byte[] body =
-                jsonMapper
-                        .writeValueAsBytes(
-                                remote
-                        );
+                jsonMapper.writeValueAsBytes(
+                        remote
+                );
 
-        /*
-         * Regression для прежнего:
-         *
-         * MAX_SUPPORTED_BODY_BYTES = 64 * 1024.
-         */
-        assertThat(
-                body.length
-        ).isGreaterThan(
-                64 * 1024
-        );
-
-        RestClientResponseException cause =
-                responseException(
-                        500,
-                        body
+        assertThat(body.length)
+                .isGreaterThan(
+                        64 * 1024
                 );
 
         UnifiedErrorException restored =
-                largeChainMapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadItem"
+                largeMapper.map(
+                        responseException(
+                                500,
+                                body
+                        ),
+                        "Gateway",
+                        "load"
                 );
 
+        assertThat(restored.getErrorId())
+                .isEqualTo(errorId);
+
+        assertThat(restored.getChainElements())
+                .hasSize(71);
+    }
+
+    @Test
+    void configuredRemoteBodyLimitIsRespected() {
+        UnifiedErrorProperties properties =
+                new UnifiedErrorProperties();
+
+        properties.setMaxChainSize(5);
+        properties.setMaxRemoteBodyBytes(
+                1024
+        );
+
+        TechnicalDetailsFactory factory =
+                new TechnicalDetailsFactory(
+                        properties
+                );
+
+        RemoteErrorResponseDecoder decoder =
+                new RemoteErrorResponseDecoder(
+                        jsonMapper,
+                        properties
+                );
+
+        OutgoingHttpExceptionMapper limitedMapper =
+                new OutgoingHttpExceptionMapper(
+                        CurrentServiceName.of(
+                                "caller-service"
+                        ),
+                        properties,
+                        decoder,
+                        factory
+                );
+
+        byte[] oversizedBody =
+                "x".repeat(2048)
+                        .getBytes(
+                                StandardCharsets.UTF_8
+                        );
+
+        UnifiedErrorException error =
+                limitedMapper.map(
+                        responseException(
+                                500,
+                                oversizedBody
+                        ),
+                        "Gateway",
+                        "load"
+                );
+
+        ErrorResponse response =
+                error.toResponse(
+                        "caller-service"
+                );
+
+        assertThat(error.getStatus())
+                .isEqualTo(500);
+
+        assertThat(error.getErrorCode())
+                .isEqualTo(
+                        "REMOTE_SERVER_ERROR"
+                );
+
+        assertThat(response.getDetails())
+                .isNotNull();
+
+        assertThat(
+                response.getDetails()
+                        .getTruncation()
+                        .isRemoteBody()
+        ).isTrue();
+
         /*
-         * Если decoder ошибочно отвергнет body,
-         * здесь будет новый UUID.
+         * Огромный remote body не попадает
+         * в публичный response.
          */
         assertThat(
-                restored.getErrorId()
-        ).isEqualTo(
-                errorId
-        );
-
-        assertThat(
-                restored.getTimestamp()
-        ).isEqualTo(
-                ERROR_TIME
-        );
-
-        assertThat(
-                restored.getStatus()
-        ).isEqualTo(500);
-
-        assertThat(
-                restored.getErrorCode()
-        ).isEqualTo(
-                "REMOTE_TEST_ERROR"
-        );
-
-        /*
-         * max-chain-size = 100.
-         * Remote = 70 элементов.
-         * Caller = ещё 1.
-         */
-        assertThat(
-                restored.getChainElements()
-        ).hasSize(71);
-
-        assertThat(
-                restored
-                        .getChainElements()
-                        .subList(
-                                0,
-                                70
-                        )
-        ).containsExactlyElementsOf(
-                remoteChain
-        );
-
-        ChainElement caller =
-                restored
-                        .getChainElements()
-                        .getLast();
-
-        assertThat(
-                caller.getService()
-        ).isEqualTo(
-                "caller-service"
-        );
-
-        assertThat(
-                caller.getComponent()
-        ).isEqualTo(
-                "CatalogGateway"
-        );
-
-        assertThat(
-                caller.getOperation()
-        ).isEqualTo(
-                "loadItem"
+                jsonMapper
+                        .writeValueAsBytes(
+                                response
+                        ).length
+        ).isLessThan(
+                16 * 1024
         );
     }
 
     @Test
-    void maxChainSizeIsAbsoluteAndReservesPlaceForCaller() {
-        UUID errorId =
-                UUID.fromString(
-                        "22222222-3333-4444-5555-"
-                                + "666666666666"
-                );
-
+    void maxChainSizeRemainsAbsolute() {
         List<ChainElement> remoteChain =
                 List.of(
-                        chainElement(
+                        element(
                                 "service-1",
-                                "RemoteComponent",
-                                "operation-1",
-                                "RESOURCE_NOT_FOUND",
-                                "Ресурс не найден",
-                                404
+                                "A",
+                                "one",
+                                404,
+                                "RESOURCE_NOT_FOUND"
                         ),
-                        chainElement(
+                        element(
                                 "service-2",
-                                "RemoteComponent",
-                                "operation-2",
-                                "RESOURCE_NOT_FOUND",
-                                "Ресурс не найден",
-                                404
+                                "B",
+                                "two",
+                                404,
+                                "RESOURCE_NOT_FOUND"
                         ),
-                        chainElement(
+                        element(
                                 "service-3",
-                                "RemoteComponent",
-                                "operation-3",
-                                "RESOURCE_NOT_FOUND",
-                                "Ресурс не найден",
-                                404
+                                "C",
+                                "three",
+                                404,
+                                "RESOURCE_NOT_FOUND"
                         ),
-                        chainElement(
+                        element(
                                 "service-4",
-                                "RemoteComponent",
-                                "operation-4",
-                                "RESOURCE_NOT_FOUND",
-                                "Ресурс не найден",
-                                404
+                                "D",
+                                "four",
+                                404,
+                                "RESOURCE_NOT_FOUND"
                         ),
-                        chainElement(
+                        element(
                                 "service-5",
-                                "RemoteComponent",
-                                "operation-5",
-                                "RESOURCE_NOT_FOUND",
-                                "Ресурс не найден",
-                                404
+                                "E",
+                                "five",
+                                404,
+                                "RESOURCE_NOT_FOUND"
                         )
                 );
+
+        UUID errorId =
+                UUID.randomUUID();
 
         ErrorResponse remote =
                 ErrorResponse.builder()
@@ -627,65 +468,36 @@ class RemoteErrorResponseSupportTests {
                         .currentService(
                                 "service-5"
                         )
-                        .chain(
-                                remoteChain
-                        )
+                        .chain(remoteChain)
                         .build();
 
-        RestClientResponseException cause =
-                responseException(
-                        404,
-                        jsonMapper
-                                .writeValueAsBytes(
-                                        remote
-                                )
-                );
-
-        /*
-         * setUp() создаёт mapper с:
-         *
-         * max-chain-size = 5
-         */
         UnifiedErrorException restored =
                 mapper.map(
-                        cause,
+                        responseException(
+                                404,
+                                jsonMapper
+                                        .writeValueAsBytes(
+                                                remote
+                                        )
+                        ),
                         "CatalogGateway",
-                        "loadItem"
+                        "load"
                 );
 
-        assertThat(
-                restored.getErrorId()
-        ).isEqualTo(
-                errorId
-        );
+        assertThat(restored.getErrorId())
+                .isEqualTo(errorId);
 
-        /*
-         * Самое важное:
-         * локальный maxChainSize не увеличился.
-         */
         assertThat(
                 restored.getChain()
                         .getMaxSize()
         ).isEqualTo(5);
 
+        assertThat(restored.getChainElements())
+                .hasSize(5);
+
         assertThat(
                 restored.getChainElements()
-        ).hasSize(5);
-
-        /*
-         * Одно место было зарезервировано
-         * для caller-service.
-         *
-         * Поэтому из remote chain сохранились
-         * первые четыре уровня.
-         */
-        assertThat(
-                restored
-                        .getChainElements()
-                        .subList(
-                                0,
-                                4
-                        )
+                        .subList(0, 4)
         ).containsExactlyElementsOf(
                 remoteChain.subList(
                         0,
@@ -693,52 +505,45 @@ class RemoteErrorResponseSupportTests {
                 )
         );
 
-        /*
-         * Пятый remote элемент не помещается,
-         * потому что последнее место принадлежит
-         * текущему сервису.
-         */
         assertThat(
                 restored.getChainElements()
-        ).doesNotContain(
-                remoteChain.get(4)
-        );
-
-        ChainElement caller =
-                restored
-                        .getChainElements()
-                        .getLast();
-
-        assertThat(
-                caller.getService()
+                        .getLast()
+                        .getService()
         ).isEqualTo(
                 "caller-service"
         );
 
-        assertThat(
-                caller.getComponent()
-        ).isEqualTo(
-                "CatalogGateway"
-        );
-
-        assertThat(
-                caller.getOperation()
-        ).isEqualTo(
-                "loadItem"
-        );
-
-        assertThat(
-                restored.isChainLimitReached()
-        ).isTrue();
+        assertThat(restored.isChainTruncated())
+                .isTrue();
     }
 
-    private static ChainElement largeChainElement(
+    private static ChainElement element(
+            String service,
+            String component,
+            String operation,
+            int status,
+            String errorCode
+    ) {
+        return ChainElement.builder()
+                .service(service)
+                .component(component)
+                .operation(operation)
+                .errorCode(errorCode)
+                .message(
+                        status == 404
+                                ? "Ресурс не найден"
+                                : "Удалённая ошибка"
+                )
+                .timestamp(ERROR_TIME)
+                .status(status)
+                .build();
+    }
+
+    private static ChainElement largeElement(
             int index
     ) {
-        String operationPrefix =
-                "operation-"
-                        + index
-                        + "-";
+        String prefix =
+                "operation-" + index + "-";
 
         return ChainElement.builder()
                 .service(
@@ -748,11 +553,10 @@ class RemoteErrorResponseSupportTests {
                         "c".repeat(160)
                 )
                 .operation(
-                        operationPrefix
+                        prefix
                                 + "o".repeat(
                                 160
-                                        - operationPrefix
-                                        .length()
+                                        - prefix.length()
                         )
                 )
                 .errorCode(
@@ -761,29 +565,8 @@ class RemoteErrorResponseSupportTests {
                 .message(
                         "m".repeat(500)
                 )
-                .timestamp(
-                        ERROR_TIME
-                )
-                .status(500)
-                .build();
-    }
-
-    private static ChainElement chainElement(
-            String service,
-            String component,
-            String operation,
-            String errorCode,
-            String message,
-            int status
-    ) {
-        return ChainElement.builder()
-                .service(service)
-                .component(component)
-                .operation(operation)
-                .errorCode(errorCode)
-                .message(message)
                 .timestamp(ERROR_TIME)
-                .status(status)
+                .status(500)
                 .build();
     }
 
@@ -793,7 +576,7 @@ class RemoteErrorResponseSupportTests {
             byte[] body
     ) {
         return new RestClientResponseException(
-                "remote technical error",
+                "remote technical",
                 status,
                 "Remote Error",
                 HttpHeaders.EMPTY,

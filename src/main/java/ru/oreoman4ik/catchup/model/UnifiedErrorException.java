@@ -1,8 +1,11 @@
 package ru.oreoman4ik.catchup.model;
 
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class UnifiedErrorException
         extends RuntimeException {
@@ -19,6 +22,15 @@ public final class UnifiedErrorException
 
     private final Throwable originalCause;
 
+    private final AtomicBoolean messageTruncated;
+
+    /**
+     * Нужен для защиты от повторного логирования
+     * одного экземпляра ошибки.
+     */
+    private final AtomicBoolean logged =
+            new AtomicBoolean(false);
+
     private volatile ExceptionChain chain;
 
     private UnifiedErrorException(
@@ -26,16 +38,13 @@ public final class UnifiedErrorException
             Instant timestamp,
             int status,
             String errorCode,
-            String message,
+            ErrorDataLimiter.LimitedText message,
             ErrorDetails details,
             Throwable originalCause,
             ExceptionChain chain
     ) {
         super(
-                ErrorModelValidation.publicMessage(
-                        "message",
-                        message
-                ),
+                message.value(),
                 ErrorModelValidation.required(
                         "originalCause",
                         originalCause
@@ -68,12 +77,18 @@ public final class UnifiedErrorException
 
         this.details = details;
 
-        this.originalCause = originalCause;
+        this.originalCause =
+                originalCause;
 
         this.chain =
                 ErrorModelValidation.required(
                         "chain",
                         chain
+                );
+
+        this.messageTruncated =
+                new AtomicBoolean(
+                        message.truncated()
                 );
     }
 
@@ -116,12 +131,19 @@ public final class UnifiedErrorException
             return existing;
         }
 
+        ErrorDataLimiter.LimitedText
+                limitedMessage =
+                ErrorDataLimiter
+                        .publicMessage(
+                                message
+                        );
+
         return new UnifiedErrorException(
                 UUID.randomUUID(),
                 timestamp,
                 status,
                 errorCode,
-                message,
+                limitedMessage,
                 details,
                 cause,
                 ExceptionChain.empty(
@@ -172,14 +194,6 @@ public final class UnifiedErrorException
         );
     }
 
-    /**
-     * Восстанавливает ошибку из удалённого ErrorResponse.
-     *
-     * <p>Цепочка никогда не превышает maxChainSize.
-     * Если удалённая цепочка длиннее локального лимита,
-     * сохраняются первые элементы — то есть контекст,
-     * ближайший к месту возникновения ошибки.</p>
-     */
     public static UnifiedErrorException fromResponse(
             ErrorResponse response,
             Throwable cause,
@@ -194,14 +208,8 @@ public final class UnifiedErrorException
     }
 
     /**
-     * Восстанавливает удалённую ошибку и резервирует
-     * указанное количество мест в chain для последующих
-     * локальных контекстов.
-     *
-     * <p>Например, HTTP mapper использует
-     * reservedChainSlots = 1, чтобы текущий сервис
-     * гарантированно можно было добавить последним,
-     * не превышая maxChainSize.</p>
+     * Восстанавливает ошибку другого сервиса,
+     * сохраняя строгий локальный maxChainSize.
      */
     public static UnifiedErrorException fromResponse(
             ErrorResponse response,
@@ -220,14 +228,15 @@ public final class UnifiedErrorException
         );
 
         /*
-         * Одновременно валидирует maxChainSize.
+         * Одновременно валидируем maxChainSize.
          */
         ExceptionChain.empty(
                 maxChainSize
         );
 
         if (reservedChainSlots < 0
-                || reservedChainSlots > maxChainSize) {
+                || reservedChainSlots
+                > maxChainSize) {
 
             throw new IllegalArgumentException(
                     "reservedChainSlots must be "
@@ -243,36 +252,41 @@ public final class UnifiedErrorException
         List<ChainElement> remoteChain =
                 response.getChain();
 
-        List<ChainElement> retainedChain;
+        boolean chainTruncated =
+                remoteChain.size()
+                        > maxRemoteElements;
 
-        if (remoteChain.size()
-                <= maxRemoteElements) {
-
-            retainedChain = remoteChain;
-
-        } else {
-
-            retainedChain =
-                    List.copyOf(
-                            remoteChain.subList(
-                                    0,
-                                    maxRemoteElements
-                            )
-                    );
-        }
+        List<ChainElement> retainedChain =
+                remoteChain.size()
+                        <= maxRemoteElements
+                        ? remoteChain
+                        : List.copyOf(
+                        remoteChain.subList(
+                                0,
+                                maxRemoteElements
+                        )
+                );
 
         ExceptionChain restoredChain =
-                ExceptionChain.of(
+                ExceptionChain.restored(
                         retainedChain,
-                        maxChainSize
+                        maxChainSize,
+                        chainTruncated
                 );
+
+        ErrorDataLimiter.LimitedText
+                limitedMessage =
+                ErrorDataLimiter
+                        .publicMessage(
+                                response.getMessage()
+                        );
 
         return new UnifiedErrorException(
                 response.getErrorId(),
                 response.getTimestamp(),
                 response.getStatus(),
                 response.getErrorCode(),
-                response.getMessage(),
+                limitedMessage,
                 response.getDetails(),
                 cause,
                 restoredChain
@@ -293,11 +307,25 @@ public final class UnifiedErrorException
     ) {
         if (chain.isEmpty()) {
             throw new IllegalStateException(
-                    "chain must contain at least one "
-                            + "element before creating "
+                    "chain must contain at least "
+                            + "one element before creating "
                             + "ErrorResponse"
             );
         }
+
+        TruncationInfo runtimeTruncation =
+                new TruncationInfo(
+                        chain.isTruncated(),
+                        messageTruncated.get(),
+                        false,
+                        false
+                );
+
+        ErrorDetails responseDetails =
+                ErrorDetails.mergeTruncation(
+                        details,
+                        runtimeTruncation
+                );
 
         return ErrorResponse.builder()
                 .errorId(errorId)
@@ -311,8 +339,21 @@ public final class UnifiedErrorException
                 .chain(
                         chain.getElements()
                 )
-                .details(details)
+                .details(
+                        responseDetails
+                )
                 .build();
+    }
+
+    /**
+     * @return true только один раз для конкретного
+     * экземпляра UnifiedErrorException.
+     */
+    public boolean tryMarkLogged() {
+        return logged.compareAndSet(
+                false,
+                true
+        );
     }
 
     public UUID getErrorId() {
@@ -343,11 +384,20 @@ public final class UnifiedErrorException
         return chain;
     }
 
-    public List<ChainElement> getChainElements() {
+    public List<ChainElement>
+    getChainElements() {
         return chain.getElements();
     }
 
     public boolean isChainLimitReached() {
         return chain.isLimitReached();
+    }
+
+    public boolean isChainTruncated() {
+        return chain.isTruncated();
+    }
+
+    public boolean isMessageTruncated() {
+        return messageTruncated.get();
     }
 }

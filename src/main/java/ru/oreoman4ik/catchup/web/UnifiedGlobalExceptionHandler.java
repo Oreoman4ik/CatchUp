@@ -33,6 +33,8 @@ import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
 import ru.oreoman4ik.catchup.config.CurrentServiceName;
 import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
 import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
+import ru.oreoman4ik.catchup.logging.Slf4jErrorLogSink;
+import ru.oreoman4ik.catchup.logging.UnifiedErrorLogger;
 import ru.oreoman4ik.catchup.model.BusinessException;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
@@ -82,13 +84,20 @@ public final class UnifiedGlobalExceptionHandler
     private final TechnicalDetailsFactory
             technicalDetailsFactory;
 
+    private final UnifiedErrorLogger
+            errorLogger;
+
+    /**
+     * Основной production constructor.
+     */
     public UnifiedGlobalExceptionHandler(
             CurrentServiceName currentService,
             UnifiedErrorProperties properties,
             OutgoingHttpExceptionMapper
                     outgoingHttpExceptionMapper,
             TechnicalDetailsFactory
-                    technicalDetailsFactory
+                    technicalDetailsFactory,
+            UnifiedErrorLogger errorLogger
     ) {
         if (currentService == null) {
             throw new IllegalArgumentException(
@@ -116,6 +125,12 @@ public final class UnifiedGlobalExceptionHandler
             );
         }
 
+        if (errorLogger == null) {
+            throw new IllegalArgumentException(
+                    "errorLogger is required"
+            );
+        }
+
         this.currentService =
                 currentService.value();
 
@@ -131,10 +146,35 @@ public final class UnifiedGlobalExceptionHandler
 
         this.technicalDetailsFactory =
                 technicalDetailsFactory;
+
+        this.errorLogger =
+                errorLogger;
     }
 
-    /*
-     * Совместимость с существующими unit-тестами.
+    /**
+     * Совместимость с тестами задачи 8/9.
+     */
+    public UnifiedGlobalExceptionHandler(
+            CurrentServiceName currentService,
+            UnifiedErrorProperties properties,
+            OutgoingHttpExceptionMapper
+                    outgoingHttpExceptionMapper,
+            TechnicalDetailsFactory
+                    technicalDetailsFactory
+    ) {
+        this(
+                currentService,
+                properties,
+                outgoingHttpExceptionMapper,
+                technicalDetailsFactory,
+                new UnifiedErrorLogger(
+                        new Slf4jErrorLogSink()
+                )
+        );
+    }
+
+    /**
+     * Совместимость со старыми unit tests.
      */
     public UnifiedGlobalExceptionHandler(
             String currentService,
@@ -175,6 +215,11 @@ public final class UnifiedGlobalExceptionHandler
         this.technicalDetailsFactory =
                 new TechnicalDetailsFactory(
                         properties
+                );
+
+        this.errorLogger =
+                new UnifiedErrorLogger(
+                        new Slf4jErrorLogSink()
                 );
     }
 
@@ -256,14 +301,6 @@ public final class UnifiedGlobalExceptionHandler
         );
     }
 
-    /*
-     * Единственный источник классификации
-     * исходящих HTTP-ошибок —
-     * OutgoingHttpExceptionMapper.
-     *
-     * Он же пытается восстановить ErrorResponse
-     * другого микросервиса.
-     */
     @ExceptionHandler(
             RestClientException.class
     )
@@ -557,6 +594,16 @@ public final class UnifiedGlobalExceptionHandler
                         currentService
                 );
 
+        /*
+         * Логируем уже после формирования body:
+         * errorId в response и log гарантированно
+         * один и тот же.
+         */
+        errorLogger.log(
+                unifiedError,
+                currentService
+        );
+
         return ResponseEntity
                 .status(
                         body.getStatus()
@@ -613,6 +660,11 @@ public final class UnifiedGlobalExceptionHandler
                         currentService
                 );
 
+        errorLogger.log(
+                exception,
+                currentService
+        );
+
         return ResponseEntity
                 .status(
                         body.getStatus()
@@ -634,17 +686,27 @@ public final class UnifiedGlobalExceptionHandler
                 resolveLocation(request);
 
         return ChainElement.builder()
-                .service(currentService)
+                .service(
+                        currentService
+                )
                 .component(
                         location.component()
                 )
                 .operation(
                         location.operation()
                 )
-                .errorCode(errorCode)
-                .message(message)
-                .timestamp(timestamp)
-                .status(status)
+                .errorCode(
+                        errorCode
+                )
+                .message(
+                        message
+                )
+                .timestamp(
+                        timestamp
+                )
+                .status(
+                        status
+                )
                 .build();
     }
 
@@ -687,7 +749,9 @@ public final class UnifiedGlobalExceptionHandler
             return new HttpHeaders();
         }
 
-        return HttpHeaders.copyOf(headers);
+        return HttpHeaders.copyOf(
+                headers
+        );
     }
 
     private static HttpServletRequest
@@ -719,16 +783,18 @@ public final class UnifiedGlobalExceptionHandler
                 MethodArgumentTypeMismatchException
                         mismatch) {
 
-            field = safeFieldName(
-                    mismatch.getName()
-            );
+            field =
+                    safeFieldName(
+                            mismatch.getName()
+                    );
 
         } else {
 
-            field = safeFieldName(
-                    exception
-                            .getPropertyName()
-            );
+            field =
+                    safeFieldName(
+                            exception
+                                    .getPropertyName()
+                    );
         }
 
         return ErrorDetails.builder()
@@ -818,7 +884,9 @@ public final class UnifiedGlobalExceptionHandler
             );
         }
 
-        return List.copyOf(result);
+        return List.copyOf(
+                result
+        );
     }
 
     private static void addViolation(
@@ -830,7 +898,9 @@ public final class UnifiedGlobalExceptionHandler
         if (target.size()
                 < MAX_VALIDATION_ERRORS) {
 
-            target.add(violation);
+            target.add(
+                    violation
+            );
         }
     }
 
@@ -840,7 +910,8 @@ public final class UnifiedGlobalExceptionHandler
     ) {
         String field =
                 error
-                        instanceof FieldError fieldError
+                        instanceof
+                        FieldError fieldError
                         ? safeFieldName(
                         fieldError
                                 .getField()
@@ -878,7 +949,9 @@ public final class UnifiedGlobalExceptionHandler
         return ErrorDetails
                 .FieldViolation
                 .of(
-                        safeFieldName(field),
+                        safeFieldName(
+                                field
+                        ),
                         reasonCode,
                         validationMessage(
                                 reasonCode
@@ -930,7 +1003,9 @@ public final class UnifiedGlobalExceptionHandler
         }
 
         return ErrorDetails.builder()
-                .violations(violations)
+                .violations(
+                        violations
+                )
                 .build();
     }
 
@@ -938,7 +1013,8 @@ public final class UnifiedGlobalExceptionHandler
             MethodParameter parameter
     ) {
         String name =
-                parameter.getParameterName();
+                parameter
+                        .getParameterName();
 
         if (name == null
                 || name.isBlank()) {
@@ -948,7 +1024,9 @@ public final class UnifiedGlobalExceptionHandler
                     .getParameterIndex();
         }
 
-        return safeFieldName(name);
+        return safeFieldName(
+                name
+        );
     }
 
     private static String
@@ -1198,7 +1276,9 @@ public final class UnifiedGlobalExceptionHandler
                 )
                         : path;
 
-        return safeFieldName(result);
+        return safeFieldName(
+                result
+        );
     }
 
     private static String safeFieldName(
