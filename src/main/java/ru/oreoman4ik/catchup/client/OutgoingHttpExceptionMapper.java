@@ -313,7 +313,8 @@ public final class OutgoingHttpExceptionMapper {
                         .fromResponse(
                                 sanitizedResponse,
                                 cause,
-                                maxChainSize
+                                maxChainSize,
+                                1
                         );
 
         Mapping callerMapping =

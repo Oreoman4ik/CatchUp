@@ -32,16 +32,14 @@ public final class UnifiedErrorException
             ExceptionChain chain
     ) {
         super(
-                ErrorModelValidation
-                        .publicMessage(
-                                "message",
-                                message
-                        ),
-                ErrorModelValidation
-                        .required(
-                                "originalCause",
-                                originalCause
-                        )
+                ErrorModelValidation.publicMessage(
+                        "message",
+                        message
+                ),
+                ErrorModelValidation.required(
+                        "originalCause",
+                        originalCause
+                )
         );
 
         this.errorId =
@@ -70,8 +68,7 @@ public final class UnifiedErrorException
 
         this.details = details;
 
-        this.originalCause =
-                originalCause;
+        this.originalCause = originalCause;
 
         this.chain =
                 ErrorModelValidation.required(
@@ -175,10 +172,42 @@ public final class UnifiedErrorException
         );
     }
 
+    /**
+     * Восстанавливает ошибку из удалённого ErrorResponse.
+     *
+     * <p>Цепочка никогда не превышает maxChainSize.
+     * Если удалённая цепочка длиннее локального лимита,
+     * сохраняются первые элементы — то есть контекст,
+     * ближайший к месту возникновения ошибки.</p>
+     */
     public static UnifiedErrorException fromResponse(
             ErrorResponse response,
             Throwable cause,
             int maxChainSize
+    ) {
+        return fromResponse(
+                response,
+                cause,
+                maxChainSize,
+                0
+        );
+    }
+
+    /**
+     * Восстанавливает удалённую ошибку и резервирует
+     * указанное количество мест в chain для последующих
+     * локальных контекстов.
+     *
+     * <p>Например, HTTP mapper использует
+     * reservedChainSlots = 1, чтобы текущий сервис
+     * гарантированно можно было добавить последним,
+     * не превышая maxChainSize.</p>
+     */
+    public static UnifiedErrorException fromResponse(
+            ErrorResponse response,
+            Throwable cause,
+            int maxChainSize,
+            int reservedChainSlots
     ) {
         ErrorModelValidation.required(
                 "response",
@@ -191,38 +220,51 @@ public final class UnifiedErrorException
         );
 
         /*
-         * Заодно проверяет корректность
-         * локального maxChainSize.
+         * Одновременно валидирует maxChainSize.
          */
-        ExceptionChain.empty(maxChainSize);
+        ExceptionChain.empty(
+                maxChainSize
+        );
 
-        /*
-         * Уже полученная межсервисная цепочка
-         * не обрезается.
-         *
-         * Если возможно, резервируем одно
-         * дополнительное место для контекста
-         * вызывающего сервиса.
-         */
-        int requiredSizeForCallerContext =
-                Math.min(
-                        100,
-                        response
-                                .getChain()
-                                .size()
-                                + 1
-                );
+        if (reservedChainSlots < 0
+                || reservedChainSlots > maxChainSize) {
 
-        int effectiveMaxSize =
-                Math.max(
-                        maxChainSize,
-                        requiredSizeForCallerContext
-                );
+            throw new IllegalArgumentException(
+                    "reservedChainSlots must be "
+                            + "from 0 to "
+                            + maxChainSize
+            );
+        }
+
+        int maxRemoteElements =
+                maxChainSize
+                        - reservedChainSlots;
+
+        List<ChainElement> remoteChain =
+                response.getChain();
+
+        List<ChainElement> retainedChain;
+
+        if (remoteChain.size()
+                <= maxRemoteElements) {
+
+            retainedChain = remoteChain;
+
+        } else {
+
+            retainedChain =
+                    List.copyOf(
+                            remoteChain.subList(
+                                    0,
+                                    maxRemoteElements
+                            )
+                    );
+        }
 
         ExceptionChain restoredChain =
                 ExceptionChain.of(
-                        response.getChain(),
-                        effectiveMaxSize
+                        retainedChain,
+                        maxChainSize
                 );
 
         return new UnifiedErrorException(
@@ -301,8 +343,7 @@ public final class UnifiedErrorException
         return chain;
     }
 
-    public List<ChainElement>
-    getChainElements() {
+    public List<ChainElement> getChainElements() {
         return chain.getElements();
     }
 

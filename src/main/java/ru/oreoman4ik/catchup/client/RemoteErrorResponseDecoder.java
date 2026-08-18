@@ -8,10 +8,6 @@ import java.util.Optional;
 
 public final class RemoteErrorResponseDecoder {
 
-    private static final int
-            MAX_SUPPORTED_BODY_BYTES =
-            64 * 1024;
-
     private final JsonMapper jsonMapper;
 
     public RemoteErrorResponseDecoder(
@@ -26,6 +22,14 @@ public final class RemoteErrorResponseDecoder {
         this.jsonMapper = jsonMapper;
     }
 
+    /**
+     * Пытается прочитать ErrorResponse другого сервиса.
+     *
+     * <p>Повреждённый JSON, неизвестный формат или
+     * несовпадение HTTP-статуса не выбрасываются наружу:
+     * вызывающий код сможет применить обычную fallback
+     * классификацию HTTP-ошибки.</p>
+     */
     public Optional<ErrorResponse> decode(
             RestClientResponseException exception
     ) {
@@ -37,10 +41,7 @@ public final class RemoteErrorResponseDecoder {
                 exception
                         .getResponseBodyAsByteArray();
 
-        if (body.length == 0
-                || body.length
-                > MAX_SUPPORTED_BODY_BYTES) {
-
+        if (body.length == 0) {
             return Optional.empty();
         }
 
@@ -51,6 +52,10 @@ public final class RemoteErrorResponseDecoder {
                             ErrorResponse.class
                     );
 
+            /*
+             * Не доверяем JSON, если заявленный status
+             * отличается от реального HTTP status.
+             */
             if (response.getStatus()
                     != exception
                     .getStatusCode()
@@ -64,8 +69,9 @@ public final class RemoteErrorResponseDecoder {
         } catch (Exception ignored) {
 
             /*
-             * Повреждённый или неизвестный JSON
-             * не создаёт вторую ошибку.
+             * Повреждённый JSON или чужой формат
+             * не должны создавать вторую
+             * необработанную ошибку.
              */
             return Optional.empty();
         }
