@@ -39,6 +39,7 @@ import ru.oreoman4ik.catchup.model.BusinessException;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
+import ru.oreoman4ik.catchup.model.TruncationInfo;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 
 import java.time.Instant;
@@ -274,10 +275,17 @@ public final class UnifiedGlobalExceptionHandler
             ConstraintViolationException exception,
             HttpServletRequest request
     ) {
+        var allViolations =
+                exception
+                        .getConstraintViolations();
+
+        boolean violationsTruncated =
+                allViolations.size()
+                        > MAX_VALIDATION_ERRORS;
+
         List<ErrorDetails.FieldViolation>
                 violations =
-                exception
-                        .getConstraintViolations()
+                allViolations
                         .stream()
                         .limit(
                                 MAX_VALIDATION_ERRORS
@@ -294,7 +302,8 @@ public final class UnifiedGlobalExceptionHandler
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
                 validationDetails(
-                        violations
+                        violations,
+                        violationsTruncated
                 ),
                 HttpHeaders.EMPTY,
                 request
@@ -377,11 +386,18 @@ public final class UnifiedGlobalExceptionHandler
             HttpStatusCode status,
             WebRequest request
     ) {
-        List<ErrorDetails.FieldViolation>
-                violations =
+        List<ObjectError> allErrors =
                 exception
                         .getBindingResult()
-                        .getAllErrors()
+                        .getAllErrors();
+
+        boolean violationsTruncated =
+                allErrors.size()
+                        > MAX_VALIDATION_ERRORS;
+
+        List<ErrorDetails.FieldViolation>
+                violations =
+                allErrors
                         .stream()
                         .limit(
                                 MAX_VALIDATION_ERRORS
@@ -398,7 +414,8 @@ public final class UnifiedGlobalExceptionHandler
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
                 validationDetails(
-                        violations
+                        violations,
+                        violationsTruncated
                 ),
                 headers,
                 servletRequest(request)
@@ -426,8 +443,7 @@ public final class UnifiedGlobalExceptionHandler
             );
         }
 
-        List<ErrorDetails.FieldViolation>
-                violations =
+        LimitedViolations violations =
                 methodValidationViolations(
                         exception
                 );
@@ -438,7 +454,8 @@ public final class UnifiedGlobalExceptionHandler
                 "VALIDATION_ERROR",
                 "Переданные данные некорректны",
                 validationDetails(
-                        violations
+                        violations.values(),
+                        violations.truncated()
                 ),
                 headers,
                 servletRequest(request)
@@ -776,26 +793,25 @@ public final class UnifiedGlobalExceptionHandler
     typeMismatchDetails(
             TypeMismatchException exception
     ) {
-        String field;
+        String rawField;
 
         if (exception
                 instanceof
                 MethodArgumentTypeMismatchException
                         mismatch) {
 
-            field =
-                    safeFieldName(
-                            mismatch.getName()
-                    );
+            rawField = mismatch.getName();
 
         } else {
 
-            field =
-                    safeFieldName(
-                            exception
-                                    .getPropertyName()
-                    );
+            rawField =
+                    exception.getPropertyName();
         }
+
+        LimitedFieldName field =
+                limitedFieldName(
+                        rawField
+                );
 
         return ErrorDetails.builder()
                 .violations(
@@ -803,35 +819,31 @@ public final class UnifiedGlobalExceptionHandler
                                 ErrorDetails
                                         .FieldViolation
                                         .of(
-                                                field,
+                                                field.value(),
                                                 "INVALID_TYPE",
                                                 "Некорректный "
-                                                        + "тип значения"
+                                                        + "тип значения",
+                                                field.truncated()
                                         )
                         )
                 )
                 .build();
     }
 
-    private static
-    List<ErrorDetails.FieldViolation>
+    private static LimitedViolations
     methodValidationViolations(
             HandlerMethodValidationException exception
     ) {
         List<ErrorDetails.FieldViolation>
                 result =
-                new ArrayList<>();
+                new ArrayList<>(
+                        MAX_VALIDATION_ERRORS
+                );
 
         for (ParameterValidationResult
                 validationResult
                 : exception
                 .getParameterValidationResults()) {
-
-            if (result.size()
-                    >= MAX_VALIDATION_ERRORS) {
-
-                break;
-            }
 
             if (validationResult
                     instanceof
@@ -840,8 +852,16 @@ public final class UnifiedGlobalExceptionHandler
                 for (ObjectError error
                         : errors.getAllErrors()) {
 
-                    addViolation(
-                            result,
+                    if (result.size()
+                            >= MAX_VALIDATION_ERRORS) {
+
+                        return new LimitedViolations(
+                                List.copyOf(result),
+                                true
+                        );
+                    }
+
+                    result.add(
                             toFieldViolation(
                                     error
                             )
@@ -861,8 +881,16 @@ public final class UnifiedGlobalExceptionHandler
                     : validationResult
                     .getResolvableErrors()) {
 
-                addViolation(
-                        result,
+                if (result.size()
+                        >= MAX_VALIDATION_ERRORS) {
+
+                    return new LimitedViolations(
+                            List.copyOf(result),
+                            true
+                    );
+                }
+
+                result.add(
                         toFieldViolation(
                                 field,
                                 error
@@ -875,8 +903,16 @@ public final class UnifiedGlobalExceptionHandler
                 : exception
                 .getCrossParameterValidationResults()) {
 
-            addViolation(
-                    result,
+            if (result.size()
+                    >= MAX_VALIDATION_ERRORS) {
+
+                return new LimitedViolations(
+                        List.copyOf(result),
+                        true
+                );
+            }
+
+            result.add(
                     toFieldViolation(
                             "request",
                             error
@@ -884,39 +920,27 @@ public final class UnifiedGlobalExceptionHandler
             );
         }
 
-        return List.copyOf(
-                result
+        return new LimitedViolations(
+                List.copyOf(result),
+                false
         );
-    }
-
-    private static void addViolation(
-            List<ErrorDetails.FieldViolation>
-                    target,
-            ErrorDetails.FieldViolation
-                    violation
-    ) {
-        if (target.size()
-                < MAX_VALIDATION_ERRORS) {
-
-            target.add(
-                    violation
-            );
-        }
     }
 
     private static ErrorDetails.FieldViolation
     toFieldViolation(
             ObjectError error
     ) {
-        String field =
+        LimitedFieldName field =
                 error
                         instanceof
                         FieldError fieldError
-                        ? safeFieldName(
-                        fieldError
-                                .getField()
+                        ? limitedFieldName(
+                        fieldError.getField()
                 )
-                        : "request";
+                        : new LimitedFieldName(
+                        "request",
+                        false
+                );
 
         String reasonCode =
                 validationReasonCode(
@@ -926,11 +950,12 @@ public final class UnifiedGlobalExceptionHandler
         return ErrorDetails
                 .FieldViolation
                 .of(
-                        field,
+                        field.value(),
                         reasonCode,
                         validationMessage(
                                 reasonCode
-                        )
+                        ),
+                        field.truncated()
                 );
     }
 
@@ -946,16 +971,20 @@ public final class UnifiedGlobalExceptionHandler
                         )
                 );
 
+        LimitedFieldName limitedField =
+                limitedFieldName(
+                        field
+                );
+
         return ErrorDetails
                 .FieldViolation
                 .of(
-                        safeFieldName(
-                                field
-                        ),
+                        limitedField.value(),
                         reasonCode,
                         validationMessage(
                                 reasonCode
-                        )
+                        ),
+                        limitedField.truncated()
                 );
     }
 
@@ -963,11 +992,13 @@ public final class UnifiedGlobalExceptionHandler
     toFieldViolation(
             ConstraintViolation<?> violation
     ) {
-        String field =
-                lastPathElement(
-                        violation
-                                .getPropertyPath()
-                                .toString()
+        LimitedFieldName field =
+                limitedFieldName(
+                        lastPathElement(
+                                violation
+                                        .getPropertyPath()
+                                        .toString()
+                        )
                 );
 
         String constraintName =
@@ -985,28 +1016,38 @@ public final class UnifiedGlobalExceptionHandler
         return ErrorDetails
                 .FieldViolation
                 .of(
-                        field,
+                        field.value(),
                         reasonCode,
                         validationMessage(
                                 reasonCode
-                        )
+                        ),
+                        field.truncated()
                 );
     }
 
     private static ErrorDetails
     validationDetails(
             List<ErrorDetails.FieldViolation>
-                    violations
+                    violations,
+            boolean truncated
     ) {
-        if (violations.isEmpty()) {
-            return null;
+        ErrorDetails details =
+                violations.isEmpty()
+                        ? null
+                        : ErrorDetails.builder()
+                        .violations(
+                                violations
+                        )
+                        .build();
+
+        if (!truncated) {
+            return details;
         }
 
-        return ErrorDetails.builder()
-                .violations(
-                        violations
-                )
-                .build();
+        return ErrorDetails.mergeTruncation(
+                details,
+                TruncationInfo.data()
+        );
     }
 
     private static String parameterName(
@@ -1024,9 +1065,7 @@ public final class UnifiedGlobalExceptionHandler
                     .getParameterIndex();
         }
 
-        return safeFieldName(
-                name
-        );
+        return name;
     }
 
     private static String
@@ -1269,25 +1308,24 @@ public final class UnifiedGlobalExceptionHandler
         int separator =
                 path.lastIndexOf('.');
 
-        String result =
-                separator >= 0
-                        ? path.substring(
-                        separator + 1
-                )
-                        : path;
-
-        return safeFieldName(
-                result
-        );
+        return separator >= 0
+                ? path.substring(
+                separator + 1
+        )
+                : path;
     }
 
-    private static String safeFieldName(
+    private static LimitedFieldName
+    limitedFieldName(
             String field
     ) {
         if (field == null
                 || field.isBlank()) {
 
-            return "request";
+            return new LimitedFieldName(
+                    "request",
+                    false
+            );
         }
 
         String normalized =
@@ -1307,17 +1345,26 @@ public final class UnifiedGlobalExceptionHandler
                         .trim();
 
         if (normalized.isEmpty()) {
-            return "request";
-        }
-
-        if (normalized.length() > 160) {
-            return normalized.substring(
-                    0,
-                    160
+            return new LimitedFieldName(
+                    "request",
+                    false
             );
         }
 
-        return normalized;
+        if (normalized.length() > 160) {
+            return new LimitedFieldName(
+                    normalized.substring(
+                            0,
+                            160
+                    ),
+                    true
+            );
+        }
+
+        return new LimitedFieldName(
+                normalized,
+                false
+        );
     }
 
     private static String validateServiceName(
@@ -1365,6 +1412,18 @@ public final class UnifiedGlobalExceptionHandler
         }
 
         return value;
+    }
+
+    private record LimitedViolations(
+            List<ErrorDetails.FieldViolation> values,
+            boolean truncated
+    ) {
+    }
+
+    private record LimitedFieldName(
+            String value,
+            boolean truncated
+    ) {
     }
 
     private record RequestLocation(

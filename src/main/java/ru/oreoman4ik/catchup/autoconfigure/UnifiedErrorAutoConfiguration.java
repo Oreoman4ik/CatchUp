@@ -10,7 +10,10 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 import org.springframework.web.servlet.DispatcherServlet;
+import ru.oreoman4ik.catchup.client.CatchUpRestClientCustomizer;
+import ru.oreoman4ik.catchup.client.CatchUpRestTemplateCustomizer;
 import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
+import ru.oreoman4ik.catchup.client.RemoteBodyLimitingInterceptor;
 import ru.oreoman4ik.catchup.client.RemoteErrorResponseDecoder;
 import ru.oreoman4ik.catchup.config.CurrentServiceName;
 import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
@@ -69,6 +72,45 @@ public class UnifiedErrorAutoConfiguration {
     ) {
         return new TechnicalDetailsFactory(
                 properties
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+            RemoteBodyLimitingInterceptor.class
+    )
+    RemoteBodyLimitingInterceptor
+    remoteBodyLimitingInterceptor(
+            UnifiedErrorProperties properties
+    ) {
+        return new RemoteBodyLimitingInterceptor(
+                properties.getMaxRemoteBodyBytes()
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+            CatchUpRestClientCustomizer.class
+    )
+    CatchUpRestClientCustomizer
+    catchUpRestClientCustomizer(
+            RemoteBodyLimitingInterceptor interceptor
+    ) {
+        return new CatchUpRestClientCustomizer(
+                interceptor
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+            CatchUpRestTemplateCustomizer.class
+    )
+    CatchUpRestTemplateCustomizer
+    catchUpRestTemplateCustomizer(
+            RemoteBodyLimitingInterceptor interceptor
+    ) {
+        return new CatchUpRestTemplateCustomizer(
+                interceptor
         );
     }
 

@@ -17,6 +17,26 @@ public final class TruncationInfo {
 
     private final boolean remoteBody;
 
+    private final boolean data;
+
+    /**
+     * Совместимость с опубликованным Java API.
+     */
+    public TruncationInfo(
+            boolean chain,
+            boolean message,
+            boolean technicalDetails,
+            boolean remoteBody
+    ) {
+        this(
+                chain,
+                message,
+                technicalDetails,
+                remoteBody,
+                false
+        );
+    }
+
     @JsonCreator
     public TruncationInfo(
             @JsonProperty("chain")
@@ -29,13 +49,47 @@ public final class TruncationInfo {
             boolean technicalDetails,
 
             @JsonProperty("remoteBody")
-            boolean remoteBody
+            boolean remoteBody,
+
+            @JsonProperty("data")
+            boolean data
     ) {
         this.chain = chain;
         this.message = message;
         this.technicalDetails =
                 technicalDetails;
         this.remoteBody = remoteBody;
+        this.data = data;
+    }
+
+    public static TruncationInfo message() {
+        return new TruncationInfo(
+                false,
+                true,
+                false,
+                false,
+                false
+        );
+    }
+
+    public static TruncationInfo data() {
+        return new TruncationInfo(
+                false,
+                false,
+                false,
+                false,
+                true
+        );
+    }
+
+    public static TruncationInfo remoteBody() {
+        return new TruncationInfo(
+                false,
+                false,
+                false,
+                true,
+                false
+        );
     }
 
     public boolean isChain() {
@@ -54,11 +108,16 @@ public final class TruncationInfo {
         return remoteBody;
     }
 
+    public boolean isData() {
+        return data;
+    }
+
     public boolean isAny() {
         return chain
                 || message
                 || technicalDetails
-                || remoteBody;
+                || remoteBody
+                || data;
     }
 
     public TruncationInfo merge(
@@ -74,7 +133,8 @@ public final class TruncationInfo {
                 technicalDetails
                         || other.technicalDetails,
                 remoteBody
-                        || other.remoteBody
+                        || other.remoteBody,
+                data || other.data
         );
     }
 
@@ -95,7 +155,8 @@ public final class TruncationInfo {
                 && technicalDetails
                 == that.technicalDetails
                 && remoteBody
-                == that.remoteBody;
+                == that.remoteBody
+                && data == that.data;
     }
 
     @Override
@@ -104,7 +165,8 @@ public final class TruncationInfo {
                 chain,
                 message,
                 technicalDetails,
-                remoteBody
+                remoteBody,
+                data
         );
     }
 
@@ -116,6 +178,7 @@ public final class TruncationInfo {
                 + ", technicalDetails="
                 + technicalDetails
                 + ", remoteBody=" + remoteBody
+                + ", data=" + data
                 + '}';
     }
 }

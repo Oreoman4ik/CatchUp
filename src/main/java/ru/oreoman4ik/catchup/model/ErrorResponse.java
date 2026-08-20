@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
 
 import java.time.Instant;
 import java.util.List;
@@ -68,30 +69,40 @@ public final class ErrorResponse {
             @JsonProperty("details")
             ErrorDetails details
     ) {
-        this.errorId = ErrorModelValidation.required(
-                "errorId",
-                errorId
-        );
+        this.errorId =
+                ErrorModelValidation.required(
+                        "errorId",
+                        errorId
+                );
 
-        this.timestamp = ErrorModelValidation.required(
-                "timestamp",
-                timestamp
-        );
+        this.timestamp =
+                ErrorModelValidation.required(
+                        "timestamp",
+                        timestamp
+                );
 
-        this.status = ErrorModelValidation.httpStatus(
-                "status",
-                status
-        );
+        this.status =
+                ErrorModelValidation.httpStatus(
+                        "status",
+                        status
+                );
 
-        this.message = ErrorModelValidation.publicMessage(
-                "message",
-                message
-        );
+        ErrorDataLimiter.LimitedText
+                limitedMessage =
+                ErrorModelValidation
+                        .publicMessageWithMetadata(
+                                "message",
+                                message
+                        );
 
-        this.errorCode = ErrorModelValidation.publicCode(
-                "errorCode",
-                errorCode
-        );
+        this.message =
+                limitedMessage.value();
+
+        this.errorCode =
+                ErrorModelValidation.publicCode(
+                        "errorCode",
+                        errorCode
+                );
 
         this.currentService =
                 ErrorModelValidation.requiredText(
@@ -101,13 +112,35 @@ public final class ErrorResponse {
                 );
 
         this.chain =
-                ErrorModelValidation.immutableNonEmptyList(
-                        "chain",
-                        chain,
-                        MAX_CHAIN_SIZE
+                ErrorModelValidation
+                        .immutableNonEmptyList(
+                                "chain",
+                                chain,
+                                MAX_CHAIN_SIZE
+                        );
+
+        boolean chainDataTruncated =
+                this.chain
+                        .stream()
+                        .anyMatch(
+                                ChainElement
+                                        ::isMessageTruncated
+                        );
+
+        TruncationInfo modelTruncation =
+                new TruncationInfo(
+                        false,
+                        limitedMessage.truncated(),
+                        false,
+                        false,
+                        chainDataTruncated
                 );
 
-        this.details = details;
+        this.details =
+                ErrorDetails.mergeTruncation(
+                        details,
+                        modelTruncation
+                );
     }
 
     private ErrorResponse(Builder builder) {
@@ -189,7 +222,10 @@ public final class ErrorResponse {
                 && errorCode.equals(that.errorCode)
                 && currentService.equals(that.currentService)
                 && chain.equals(that.chain)
-                && Objects.equals(details, that.details);
+                && Objects.equals(
+                details,
+                that.details
+        );
     }
 
     @Override

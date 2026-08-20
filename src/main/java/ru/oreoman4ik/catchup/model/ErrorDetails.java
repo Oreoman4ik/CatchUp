@@ -1,9 +1,11 @@
 package ru.oreoman4ik.catchup.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
 
 import java.util.List;
 import java.util.Objects;
@@ -65,10 +67,30 @@ public final class ErrorDetails {
 
         this.technical = technical;
 
+        boolean nestedDataTruncated =
+                this.violations
+                        .stream()
+                        .anyMatch(
+                                FieldViolation
+                                        ::isDataTruncated
+                        );
+
+        TruncationInfo effectiveTruncation =
+                truncation;
+
+        if (nestedDataTruncated) {
+            effectiveTruncation =
+                    effectiveTruncation == null
+                            ? TruncationInfo.data()
+                            : effectiveTruncation.merge(
+                            TruncationInfo.data()
+                    );
+        }
+
         this.truncation =
-                truncation != null
-                        && truncation.isAny()
-                        ? truncation
+                effectiveTruncation != null
+                        && effectiveTruncation.isAny()
+                        ? effectiveTruncation
                         : null;
 
         if (this.resource == null
@@ -292,6 +314,8 @@ public final class ErrorDetails {
 
         private final String message;
 
+        private final boolean dataTruncated;
+
         @JsonCreator
         private FieldViolation(
                 @JsonProperty(
@@ -312,6 +336,20 @@ public final class ErrorDetails {
                 )
                 String message
         ) {
+            this(
+                    field,
+                    reasonCode,
+                    message,
+                    false
+            );
+        }
+
+        private FieldViolation(
+                String field,
+                String reasonCode,
+                String message,
+                boolean dataTruncated
+        ) {
             this.field =
                     ErrorModelValidation
                             .requiredText(
@@ -327,12 +365,20 @@ public final class ErrorDetails {
                                     reasonCode
                             );
 
-            this.message =
+            ErrorDataLimiter.LimitedText
+                    limitedMessage =
                     ErrorModelValidation
-                            .publicMessage(
+                            .publicMessageWithMetadata(
                                     "message",
                                     message
                             );
+
+            this.message =
+                    limitedMessage.value();
+
+            this.dataTruncated =
+                    dataTruncated
+                            || limitedMessage.truncated();
         }
 
         public static FieldViolation of(
@@ -343,7 +389,26 @@ public final class ErrorDetails {
             return new FieldViolation(
                     field,
                     reasonCode,
-                    message
+                    message,
+                    false
+            );
+        }
+
+        /**
+         * Используется адаптерами, которые были вынуждены
+         * сократить часть данных до создания FieldViolation.
+         */
+        public static FieldViolation of(
+                String field,
+                String reasonCode,
+                String message,
+                boolean dataTruncated
+        ) {
+            return new FieldViolation(
+                    field,
+                    reasonCode,
+                    message,
+                    dataTruncated
             );
         }
 
@@ -360,6 +425,11 @@ public final class ErrorDetails {
         @JsonProperty("message")
         public String getMessage() {
             return message;
+        }
+
+        @JsonIgnore
+        public boolean isDataTruncated() {
+            return dataTruncated;
         }
 
         @Override

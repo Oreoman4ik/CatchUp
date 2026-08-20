@@ -1,5 +1,7 @@
 package ru.oreoman4ik.catchup.model;
 
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
+
 /**
  * Контролируемая бизнес-ошибка приложения.
  *
@@ -49,25 +51,50 @@ public final class BusinessException
             ErrorDetails details,
             Throwable cause
     ) {
+        this(
+                status,
+                errorCode,
+                ErrorModelValidation
+                        .publicMessageWithMetadata(
+                                "message",
+                                message
+                        ),
+                details,
+                cause
+        );
+    }
+
+    private BusinessException(
+            int status,
+            String errorCode,
+            ErrorDataLimiter.LimitedText message,
+            ErrorDetails details,
+            Throwable cause
+    ) {
         super(
-                ErrorModelValidation.publicMessage(
-                        "message",
-                        message
-                ),
+                message.value(),
                 cause
         );
 
-        this.status = ErrorModelValidation.httpStatus(
-                "status",
-                status
-        );
+        this.status =
+                ErrorModelValidation.httpStatus(
+                        "status",
+                        status
+                );
 
-        this.errorCode = ErrorModelValidation.publicCode(
-                "errorCode",
-                errorCode
-        );
+        this.errorCode =
+                ErrorModelValidation.publicCode(
+                        "errorCode",
+                        errorCode
+                );
 
-        this.details = details;
+        this.details =
+                ErrorDetails.mergeTruncation(
+                        details,
+                        message.truncated()
+                                ? TruncationInfo.message()
+                                : null
+                );
     }
 
     public int getStatus() {

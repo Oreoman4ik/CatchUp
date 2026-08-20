@@ -140,10 +140,24 @@ final class ErrorModelValidation {
             String fieldName,
             String value
     ) {
+        return publicMessageWithMetadata(
+                fieldName,
+                value
+        ).value();
+    }
+
+    /**
+     * То же ограничение, но без потери информации
+     * о факте сокращения текста.
+     */
+    static ErrorDataLimiter.LimitedText
+    publicMessageWithMetadata(
+            String fieldName,
+            String value
+    ) {
         try {
             return ErrorDataLimiter
-                    .publicMessage(value)
-                    .value();
+                    .publicMessage(value);
 
         } catch (IllegalArgumentException exception) {
 

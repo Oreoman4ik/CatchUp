@@ -2,9 +2,11 @@ package ru.oreoman4ik.catchup.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -26,6 +28,12 @@ public final class ChainElement {
     private final String message;
     private final Instant timestamp;
     private final Integer status;
+
+    /**
+     * Внутренняя метаинформация. В JSON самого элемента
+     * не публикуется, а поднимается в ErrorResponse.details.truncation.
+     */
+    private final boolean messageTruncated;
 
     @JsonCreator
     private ChainElement(
@@ -57,38 +65,51 @@ public final class ChainElement {
             @JsonProperty("status")
             Integer status
     ) {
-        this.service = ErrorModelValidation.requiredText(
-                "service",
-                service,
-                120
-        );
+        this.service =
+                ErrorModelValidation.requiredText(
+                        "service",
+                        service,
+                        120
+                );
 
-        this.component = ErrorModelValidation.requiredText(
-                "component",
-                component,
-                160
-        );
+        this.component =
+                ErrorModelValidation.requiredText(
+                        "component",
+                        component,
+                        160
+                );
 
-        this.operation = ErrorModelValidation.requiredText(
-                "operation",
-                operation,
-                160
-        );
+        this.operation =
+                ErrorModelValidation.requiredText(
+                        "operation",
+                        operation,
+                        160
+                );
 
-        this.errorCode = ErrorModelValidation.publicCode(
-                "errorCode",
-                errorCode
-        );
+        this.errorCode =
+                ErrorModelValidation.publicCode(
+                        "errorCode",
+                        errorCode
+                );
 
-        this.message = ErrorModelValidation.publicMessage(
-                "message",
-                message
-        );
+        ErrorDataLimiter.LimitedText limitedMessage =
+                ErrorModelValidation
+                        .publicMessageWithMetadata(
+                                "message",
+                                message
+                        );
 
-        this.timestamp = ErrorModelValidation.required(
-                "timestamp",
-                timestamp
-        );
+        this.message =
+                limitedMessage.value();
+
+        this.messageTruncated =
+                limitedMessage.truncated();
+
+        this.timestamp =
+                ErrorModelValidation.required(
+                        "timestamp",
+                        timestamp
+                );
 
         this.status =
                 ErrorModelValidation.nullableHttpStatus(
@@ -151,6 +172,11 @@ public final class ChainElement {
     @JsonProperty("status")
     public Integer getStatus() {
         return status;
+    }
+
+    @JsonIgnore
+    public boolean isMessageTruncated() {
+        return messageTruncated;
     }
 
     @Override
