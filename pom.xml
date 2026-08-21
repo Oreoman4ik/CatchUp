@@ -15,13 +15,14 @@
 	</parent>
 
 	<groupId>ru.oreoman4ik</groupId>
-	<artifactId>unified-error-model</artifactId>
+	<artifactId>catchup-spring-boot-starter</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 
-	<name>Unified Error Library</name>
+	<name>CatchUp Spring Boot Starter</name>
 
 	<description>
-		Unified error models, exception chain and global REST exception handler
+		Spring Boot starter for unified REST error handling,
+		exception propagation and remote error mapping
 	</description>
 
 	<properties>
