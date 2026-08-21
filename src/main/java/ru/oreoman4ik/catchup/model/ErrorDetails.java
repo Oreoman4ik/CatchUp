@@ -1,16 +1,15 @@
 package ru.oreoman4ik.catchup.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import ru.oreoman4ik.catchup.support.ErrorDataLimiter;
 
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Типизированные дополнительные данные публичной ошибки.
- */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
 public final class ErrorDetails {
@@ -18,8 +17,14 @@ public final class ErrorDetails {
     private static final int MAX_VIOLATIONS = 100;
 
     private final String resource;
+
     private final List<FieldViolation> violations;
+
     private final Long retryAfterSeconds;
+
+    private final TechnicalDetails technical;
+
+    private final TruncationInfo truncation;
 
     @JsonCreator
     private ErrorDetails(
@@ -30,47 +35,128 @@ public final class ErrorDetails {
             List<FieldViolation> violations,
 
             @JsonProperty("retryAfterSeconds")
-            Long retryAfterSeconds
+            Long retryAfterSeconds,
+
+            @JsonProperty("technical")
+            TechnicalDetails technical,
+
+            @JsonProperty("truncation")
+            TruncationInfo truncation
     ) {
         this.resource =
-                ErrorModelValidation.optionalPublicCode(
-                        "resource",
-                        resource
-                );
+                ErrorModelValidation
+                        .optionalPublicCode(
+                                "resource",
+                                resource
+                        );
 
         this.violations =
-                ErrorModelValidation.immutableOptionalList(
-                        "violations",
-                        violations,
-                        MAX_VIOLATIONS
-                );
+                ErrorModelValidation
+                        .immutableOptionalList(
+                                "violations",
+                                violations,
+                                MAX_VIOLATIONS
+                        );
 
         this.retryAfterSeconds =
-                ErrorModelValidation.nonNegativeLong(
-                        "retryAfterSeconds",
-                        retryAfterSeconds
-                );
+                ErrorModelValidation
+                        .nonNegativeLong(
+                                "retryAfterSeconds",
+                                retryAfterSeconds
+                        );
+
+        this.technical = technical;
+
+        boolean nestedDataTruncated =
+                this.violations
+                        .stream()
+                        .anyMatch(
+                                FieldViolation
+                                        ::isDataTruncated
+                        );
+
+        TruncationInfo effectiveTruncation =
+                truncation;
+
+        if (nestedDataTruncated) {
+            effectiveTruncation =
+                    effectiveTruncation == null
+                            ? TruncationInfo.data()
+                            : effectiveTruncation.merge(
+                            TruncationInfo.data()
+                    );
+        }
+
+        this.truncation =
+                effectiveTruncation != null
+                        && effectiveTruncation.isAny()
+                        ? effectiveTruncation
+                        : null;
 
         if (this.resource == null
                 && this.violations.isEmpty()
-                && this.retryAfterSeconds == null) {
+                && this.retryAfterSeconds == null
+                && this.technical == null
+                && this.truncation == null) {
 
             throw new IllegalArgumentException(
-                    "details must contain at least one public value"
+                    "details must contain "
+                            + "at least one value"
             );
         }
     }
 
-    private ErrorDetails(Builder builder) {
+    private ErrorDetails(
+            Builder builder
+    ) {
         this(
                 builder.resource,
                 builder.violations,
-                builder.retryAfterSeconds
+                builder.retryAfterSeconds,
+                builder.technical,
+                builder.truncation
         );
     }
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * Добавляет информацию о сокращении,
+     * сохраняя остальные details.
+     */
+    public static ErrorDetails mergeTruncation(
+            ErrorDetails existing,
+            TruncationInfo additional
+    ) {
+        if (additional == null
+                || !additional.isAny()) {
+
+            return existing;
+        }
+
+        if (existing == null) {
+            return ErrorDetails.builder()
+                    .truncation(additional)
+                    .build();
+        }
+
+        TruncationInfo merged =
+                existing.truncation == null
+                        ? additional
+                        : existing.truncation
+                        .merge(additional);
+
+        return ErrorDetails.builder()
+                .resource(existing.resource)
+                .violations(existing.violations)
+                .retryAfterSeconds(
+                        existing.retryAfterSeconds
+                )
+                .technical(existing.technical)
+                .truncation(merged)
+                .build();
     }
 
     @JsonProperty("resource")
@@ -88,21 +174,48 @@ public final class ErrorDetails {
         return retryAfterSeconds;
     }
 
+    @JsonProperty("technical")
+    public TechnicalDetails getTechnical() {
+        return technical;
+    }
+
+    @JsonProperty("truncation")
+    public TruncationInfo getTruncation() {
+        return truncation;
+    }
+
     @Override
-    public boolean equals(Object object) {
+    public boolean equals(
+            Object object
+    ) {
         if (this == object) {
             return true;
         }
 
-        if (!(object instanceof ErrorDetails that)) {
+        if (!(object
+                instanceof ErrorDetails that)) {
+
             return false;
         }
 
-        return Objects.equals(resource, that.resource)
-                && violations.equals(that.violations)
+        return Objects.equals(
+                resource,
+                that.resource
+        )
+                && violations.equals(
+                that.violations
+        )
                 && Objects.equals(
                 retryAfterSeconds,
                 that.retryAfterSeconds
+        )
+                && Objects.equals(
+                technical,
+                that.technical
+        )
+                && Objects.equals(
+                truncation,
+                that.truncation
         );
     }
 
@@ -111,29 +224,48 @@ public final class ErrorDetails {
         return Objects.hash(
                 resource,
                 violations,
-                retryAfterSeconds
+                retryAfterSeconds,
+                technical,
+                truncation
         );
     }
 
     @Override
     public String toString() {
         return "ErrorDetails{"
-                + "resource='" + resource + '\''
-                + ", violations=" + violations
-                + ", retryAfterSeconds=" + retryAfterSeconds
+                + "resource='"
+                + resource
+                + '\''
+                + ", violations="
+                + violations
+                + ", retryAfterSeconds="
+                + retryAfterSeconds
+                + ", technical="
+                + technical
+                + ", truncation="
+                + truncation
                 + '}';
     }
 
     public static final class Builder {
 
         private String resource;
-        private List<FieldViolation> violations = List.of();
+
+        private List<FieldViolation> violations =
+                List.of();
+
         private Long retryAfterSeconds;
+
+        private TechnicalDetails technical;
+
+        private TruncationInfo truncation;
 
         private Builder() {
         }
 
-        public Builder resource(String resource) {
+        public Builder resource(
+                String resource
+        ) {
             this.resource = resource;
             return this;
         }
@@ -148,7 +280,22 @@ public final class ErrorDetails {
         public Builder retryAfterSeconds(
                 Long retryAfterSeconds
         ) {
-            this.retryAfterSeconds = retryAfterSeconds;
+            this.retryAfterSeconds =
+                    retryAfterSeconds;
+            return this;
+        }
+
+        public Builder technical(
+                TechnicalDetails technical
+        ) {
+            this.technical = technical;
+            return this;
+        }
+
+        public Builder truncation(
+                TruncationInfo truncation
+        ) {
+            this.truncation = truncation;
             return this;
         }
 
@@ -162,12 +309,19 @@ public final class ErrorDetails {
     public static final class FieldViolation {
 
         private final String field;
+
         private final String reasonCode;
+
         private final String message;
+
+        private final boolean dataTruncated;
 
         @JsonCreator
         private FieldViolation(
-                @JsonProperty(value = "field", required = true)
+                @JsonProperty(
+                        value = "field",
+                        required = true
+                )
                 String field,
 
                 @JsonProperty(
@@ -182,21 +336,49 @@ public final class ErrorDetails {
                 )
                 String message
         ) {
-            this.field = ErrorModelValidation.requiredText(
-                    "field",
+            this(
                     field,
-                    160
+                    reasonCode,
+                    message,
+                    false
             );
+        }
 
-            this.reasonCode = ErrorModelValidation.publicCode(
-                    "reasonCode",
-                    reasonCode
-            );
+        private FieldViolation(
+                String field,
+                String reasonCode,
+                String message,
+                boolean dataTruncated
+        ) {
+            this.field =
+                    ErrorModelValidation
+                            .requiredText(
+                                    "field",
+                                    field,
+                                    160
+                            );
 
-            this.message = ErrorModelValidation.publicMessage(
-                    "message",
-                    message
-            );
+            this.reasonCode =
+                    ErrorModelValidation
+                            .publicCode(
+                                    "reasonCode",
+                                    reasonCode
+                            );
+
+            ErrorDataLimiter.LimitedText
+                    limitedMessage =
+                    ErrorModelValidation
+                            .publicMessageWithMetadata(
+                                    "message",
+                                    message
+                            );
+
+            this.message =
+                    limitedMessage.value();
+
+            this.dataTruncated =
+                    dataTruncated
+                            || limitedMessage.truncated();
         }
 
         public static FieldViolation of(
@@ -207,7 +389,26 @@ public final class ErrorDetails {
             return new FieldViolation(
                     field,
                     reasonCode,
-                    message
+                    message,
+                    false
+            );
+        }
+
+        /**
+         * Используется адаптерами, которые были вынуждены
+         * сократить часть данных до создания FieldViolation.
+         */
+        public static FieldViolation of(
+                String field,
+                String reasonCode,
+                String message,
+                boolean dataTruncated
+        ) {
+            return new FieldViolation(
+                    field,
+                    reasonCode,
+                    message,
+                    dataTruncated
             );
         }
 
@@ -226,19 +427,32 @@ public final class ErrorDetails {
             return message;
         }
 
+        @JsonIgnore
+        public boolean isDataTruncated() {
+            return dataTruncated;
+        }
+
         @Override
-        public boolean equals(Object object) {
+        public boolean equals(
+                Object object
+        ) {
             if (this == object) {
                 return true;
             }
 
-            if (!(object instanceof FieldViolation that)) {
+            if (!(object
+                    instanceof FieldViolation that)) {
+
                 return false;
             }
 
             return field.equals(that.field)
-                    && reasonCode.equals(that.reasonCode)
-                    && message.equals(that.message);
+                    && reasonCode.equals(
+                    that.reasonCode
+            )
+                    && message.equals(
+                    that.message
+            );
         }
 
         @Override
@@ -253,9 +467,15 @@ public final class ErrorDetails {
         @Override
         public String toString() {
             return "FieldViolation{"
-                    + "field='" + field + '\''
-                    + ", reasonCode='" + reasonCode + '\''
-                    + ", message='" + message + '\''
+                    + "field='"
+                    + field
+                    + '\''
+                    + ", reasonCode='"
+                    + reasonCode
+                    + '\''
+                    + ", message='"
+                    + message
+                    + '\''
                     + '}';
         }
     }

@@ -5,25 +5,29 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Неизменяемая цепочка прохождения ошибки через сервисы,
- * компоненты и операции.
- *
- * <p>Новые элементы добавляются в конец списка, поэтому порядок
- * соответствует направлению от места возникновения ошибки
- * к текущему уровню обработки.</p>
+ * Неизменяемая цепочка прохождения ошибки.
  */
 public final class ExceptionChain {
 
     private static final int ABSOLUTE_MAX_SIZE = 100;
 
     private final List<ChainElement> elements;
+
     private final int maxSize;
+
+    /**
+     * true означает, что хотя бы один уникальный
+     * элемент цепочки был отброшен из-за лимита.
+     */
+    private final boolean truncated;
 
     private ExceptionChain(
             List<ChainElement> elements,
-            int maxSize
+            int maxSize,
+            boolean truncated
     ) {
-        this.maxSize = validateMaxSize(maxSize);
+        this.maxSize =
+                validateMaxSize(maxSize);
 
         ErrorModelValidation.required(
                 "elements",
@@ -31,76 +35,128 @@ public final class ExceptionChain {
         );
 
         this.elements =
-                ErrorModelValidation.immutableOptionalList(
-                        "elements",
-                        elements,
-                        this.maxSize
-                );
+                ErrorModelValidation
+                        .immutableOptionalList(
+                                "elements",
+                                elements,
+                                this.maxSize
+                        );
+
+        this.truncated = truncated;
     }
 
-    /**
-     * Создаёт пустую цепочку с указанным максимальным размером.
-     */
-    public static ExceptionChain empty(int maxSize) {
+    public static ExceptionChain empty(
+            int maxSize
+    ) {
         return new ExceptionChain(
                 List.of(),
-                maxSize
+                maxSize,
+                false
         );
     }
 
     /**
-     * Восстанавливает цепочку из существующих элементов.
+     * Восстанавливает цепочку.
      *
-     * <p>Переданный список копируется. Его последующее изменение
-     * не повлияет на созданную цепочку.</p>
+     * <p>Если source больше maxSize,
+     * сохраняются первые maxSize элементов.</p>
      */
     public static ExceptionChain of(
             List<ChainElement> elements,
             int maxSize
     ) {
+        ErrorModelValidation.required(
+                "elements",
+                elements
+        );
+
+        int validatedMaxSize =
+                validateMaxSize(maxSize);
+
+        int retained =
+                Math.min(
+                        elements.size(),
+                        validatedMaxSize
+                );
+
+        List<ChainElement> retainedElements =
+                List.copyOf(
+                        elements.subList(
+                                0,
+                                retained
+                        )
+                );
+
         return new ExceptionChain(
-                elements,
-                maxSize
+                retainedElements,
+                validatedMaxSize,
+                elements.size()
+                        > validatedMaxSize
         );
     }
 
     /**
-     * Добавляет новый элемент в конец цепочки.
-     *
-     * <p>Если тот же сервис, компонент и операция уже присутствуют,
-     * элемент считается повторной обработкой одного уровня и не
-     * добавляется.</p>
-     *
-     * <p>При достижении лимита цепочка остаётся неизменной.</p>
-     *
-     * @return новая цепочка либо текущий объект, если добавление
-     * не требуется
+     * Внутренняя фабрика для восстановления цепочки,
+     * когда вызывающий код уже знает факт truncation.
      */
-    public ExceptionChain add(ChainElement element) {
+    static ExceptionChain restored(
+            List<ChainElement> elements,
+            int maxSize,
+            boolean truncated
+    ) {
+        return new ExceptionChain(
+                elements,
+                maxSize,
+                truncated
+        );
+    }
+
+    public ExceptionChain add(
+            ChainElement element
+    ) {
         ErrorModelValidation.required(
                 "element",
                 element
         );
 
-        if (isLimitReached() || containsLevel(element)) {
+        /*
+         * Повтор одного уровня не является
+         * потерей информации.
+         */
+        if (containsLevel(element)) {
             return this;
         }
 
+        /*
+         * Уникальный новый уровень не помещается.
+         */
+        if (isLimitReached()) {
+            if (truncated) {
+                return this;
+            }
+
+            return new ExceptionChain(
+                    elements,
+                    maxSize,
+                    true
+            );
+        }
+
         List<ChainElement> updated =
-                new ArrayList<>(elements.size() + 1);
+                new ArrayList<>(
+                        elements.size() + 1
+                );
 
         updated.addAll(elements);
         updated.add(element);
 
         return new ExceptionChain(
                 updated,
-                maxSize
+                maxSize,
+                truncated
         );
     }
 
-    /**
-     * Возвращает неизменяемые элементы в порядке добавления.
-     */
     public List<ChainElement> getElements() {
         return elements;
     }
@@ -117,24 +173,14 @@ public final class ExceptionChain {
         return maxSize;
     }
 
-    /**
-     * @return {@code true}, если достигнут максимальный размер
-     */
     public boolean isLimitReached() {
         return elements.size() >= maxSize;
     }
 
-    /**
-     * Проверяет, присутствует ли в цепочке указанный уровень.
-     *
-     * <p>Уровень определяется сочетанием:</p>
-     *
-     * <ul>
-     *     <li>service;</li>
-     *     <li>component;</li>
-     *     <li>operation.</li>
-     * </ul>
-     */
+    public boolean isTruncated() {
+        return truncated;
+    }
+
     public boolean containsLevel(
             ChainElement candidate
     ) {
@@ -144,10 +190,13 @@ public final class ExceptionChain {
         );
 
         return elements.stream()
-                .anyMatch(existing -> sameLevel(
-                        existing,
-                        candidate
-                ));
+                .anyMatch(
+                        existing ->
+                                sameLevel(
+                                        existing,
+                                        candidate
+                                )
+                );
     }
 
     private static boolean sameLevel(
@@ -165,7 +214,9 @@ public final class ExceptionChain {
         );
     }
 
-    private static int validateMaxSize(int maxSize) {
+    private static int validateMaxSize(
+            int maxSize
+    ) {
         if (maxSize < 1
                 || maxSize > ABSOLUTE_MAX_SIZE) {
 
@@ -179,32 +230,44 @@ public final class ExceptionChain {
     }
 
     @Override
-    public boolean equals(Object object) {
+    public boolean equals(
+            Object object
+    ) {
         if (this == object) {
             return true;
         }
 
-        if (!(object instanceof ExceptionChain that)) {
+        if (!(object
+                instanceof ExceptionChain that)) {
+
             return false;
         }
 
         return maxSize == that.maxSize
-                && elements.equals(that.elements);
+                && truncated == that.truncated
+                && elements.equals(
+                that.elements
+        );
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(
                 elements,
-                maxSize
+                maxSize,
+                truncated
         );
     }
 
     @Override
     public String toString() {
         return "ExceptionChain{"
-                + "elements=" + elements
-                + ", maxSize=" + maxSize
+                + "elements="
+                + elements
+                + ", maxSize="
+                + maxSize
+                + ", truncated="
+                + truncated
                 + '}';
     }
 }

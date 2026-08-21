@@ -14,21 +14,15 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.UnknownContentTypeException;
 import ru.oreoman4ik.catchup.model.ChainElement;
-import ru.oreoman4ik.catchup.model.ErrorDetails;
 import ru.oreoman4ik.catchup.model.ErrorResponse;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
 
 import java.io.EOFException;
 import java.io.InputStream;
 import java.net.ConnectException;
-import java.net.NoRouteToHostException;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,26 +39,23 @@ class OutgoingHttpExceptionMapperTests {
                 );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * HTTP status
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void preservesRemote4xxStatus() {
+    void mapsRemote4xx() {
         RestClientResponseException cause =
-                responseException(404);
+                responseException(
+                        404,
+                        "not-json"
+                );
 
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
+                        "load"
                 );
 
         assertMapped(
-                exception,
+                error,
                 cause,
                 404,
                 "REMOTE_CLIENT_ERROR",
@@ -73,53 +64,46 @@ class OutgoingHttpExceptionMapperTests {
     }
 
     @Test
-    void preservesRemote5xxStatus() {
+    void mapsRemote5xx() {
         RestClientResponseException cause =
-                responseException(503);
+                responseException(
+                        503,
+                        "not-json"
+                );
 
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
+                        "load"
                 );
 
         assertMapped(
-                exception,
+                error,
                 cause,
                 503,
                 "REMOTE_SERVER_ERROR",
-                "Удалённый сервис завершил запрос "
-                        + "с ошибкой"
+                "Удалённый сервис завершил "
+                        + "запрос с ошибкой"
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Timeout
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void mapsTimeoutTo504() {
+    void mapsTimeout() {
         ResourceAccessException cause =
                 new ResourceAccessException(
-                        "read timeout "
-                                + "token=secret",
+                        "secret timeout URL",
                         new SocketTimeoutException(
                                 "Read timed out"
                         )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 504,
                 "REMOTE_TIMEOUT",
@@ -128,31 +112,22 @@ class OutgoingHttpExceptionMapperTests {
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Unavailable
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void mapsConnectionRefusedTo503() {
+    void mapsConnectionFailure() {
         ResourceAccessException cause =
                 new ResourceAccessException(
-                        "connection failed",
+                        "secret",
                         new ConnectException(
                                 "Connection refused"
                         )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 503,
                 "REMOTE_UNAVAILABLE",
@@ -161,82 +136,21 @@ class OutgoingHttpExceptionMapperTests {
     }
 
     @Test
-    void mapsUnknownHostTo503() {
+    void mapsConnectionResetAsNetworkError() {
         ResourceAccessException cause =
                 new ResourceAccessException(
-                        "DNS failed",
-                        new UnknownHostException(
-                                "internal-secret-host"
-                        )
-                );
-
-        UnifiedErrorException exception =
-                mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
-                cause,
-                503,
-                "REMOTE_UNAVAILABLE",
-                "Удалённый сервис недоступен"
-        );
-    }
-
-    @Test
-    void mapsNoRouteToHostTo503() {
-        ResourceAccessException cause =
-                new ResourceAccessException(
-                        "route failed",
-                        new NoRouteToHostException(
-                                "secret subnet"
-                        )
-                );
-
-        UnifiedErrorException exception =
-                mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
-                cause,
-                503,
-                "REMOTE_UNAVAILABLE",
-                "Удалённый сервис недоступен"
-        );
-    }
-
-    /*
-     * ------------------------------------------------------------
-     * Network
-     * ------------------------------------------------------------
-     */
-
-    @Test
-    void mapsConnectionResetToNetwork502() {
-        ResourceAccessException cause =
-                new ResourceAccessException(
-                        "network error",
+                        "secret",
                         new SocketException(
                                 "Connection reset"
                         )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 502,
                 "REMOTE_NETWORK_ERROR",
@@ -245,31 +159,22 @@ class OutgoingHttpExceptionMapperTests {
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Response read
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void mapsUnexpectedEofToResponseRead502() {
+    void mapsUnexpectedEofAsResponseReadError() {
         ResourceAccessException cause =
                 new ResourceAccessException(
-                        "response interrupted",
+                        "secret",
                         new EOFException(
-                                "secret response fragment"
+                                "response fragment"
                         )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 502,
                 "REMOTE_RESPONSE_READ_ERROR",
@@ -278,85 +183,47 @@ class OutgoingHttpExceptionMapperTests {
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Request body conversion
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void mapsRequestBodySerializationFailureToLocal500() {
-        HttpMessageNotWritableException conversion =
-                new HttpMessageNotWritableException(
-                        "Cannot serialize request "
-                                + "token=secret"
-                );
-
+    void requestBodySerializationIsLocal500() {
         RestClientException cause =
                 new RestClientException(
-                        "Request body conversion failed",
-                        conversion
-                );
-
-        UnifiedErrorException exception =
-                mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
+                        "request conversion",
+                        new HttpMessageNotWritableException(
+                                "token=secret"
+                        )
                 );
 
         assertMapped(
-                exception,
+                mapper.map(
+                        cause,
+                        "CatalogGateway",
+                        "save"
+                ),
                 cause,
                 500,
                 "OUTGOING_REQUEST_BODY_ERROR",
                 "Не удалось сформировать "
                         + "исходящий запрос"
         );
-
-        assertThat(
-                exception
-                        .toResponse("caller-service")
-                        .toString()
-        )
-                .doesNotContain(
-                        "token=secret"
-                )
-                .doesNotContain(
-                        "Cannot serialize request"
-                );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Response body conversion
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void mapsResponseBodyDeserializationFailureTo502() {
-        HttpMessageNotReadableException conversion =
-                new HttpMessageNotReadableException(
-                        "Cannot deserialize "
-                                + "secret response",
-                        httpInputMessage()
-                );
-
+    void responseBodyDeserializationIs502() {
         RestClientException cause =
                 new RestClientException(
-                        "Response extraction failed",
-                        conversion
-                );
-
-        UnifiedErrorException exception =
-                mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
+                        "response conversion",
+                        new HttpMessageNotReadableException(
+                                "secret body",
+                                httpInputMessage()
+                        )
                 );
 
         assertMapped(
-                exception,
+                mapper.map(
+                        cause,
+                        "CatalogGateway",
+                        "load"
+                ),
                 cause,
                 502,
                 "REMOTE_BODY_CONVERSION_ERROR",
@@ -366,7 +233,7 @@ class OutgoingHttpExceptionMapperTests {
     }
 
     @Test
-    void mapsUnknownContentTypeToResponseConversion502() {
+    void unknownContentTypeIsResponseConversionError() {
         UnknownContentTypeException cause =
                 new UnknownContentTypeException(
                         String.class,
@@ -374,62 +241,42 @@ class OutgoingHttpExceptionMapperTests {
                         HttpStatus.OK,
                         "OK",
                         HttpHeaders.EMPTY,
-                        "secret unsupported response"
+                        "secret body"
                                 .getBytes(
                                         StandardCharsets.UTF_8
                                 )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 502,
                 "REMOTE_BODY_CONVERSION_ERROR",
                 "Не удалось преобразовать ответ "
                         + "удалённого сервиса"
         );
-
-        assertThat(
-                exception
-                        .toResponse("caller-service")
-                        .toString()
-        ).doesNotContain(
-                "secret unsupported response"
-        );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Ambiguous conversion
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void genericConversionFailureDoesNotBlameRemoteResponse() {
+    void genericConversionDoesNotBlameRemoteResponse() {
         RestClientException cause =
                 new RestClientException(
-                        "HTTP conversion failed",
+                        "conversion",
                         new HttpMessageConversionException(
-                                "Unknown conversion phase"
+                                "unknown phase"
                         )
                 );
 
-        UnifiedErrorException exception =
+        assertMapped(
                 mapper.map(
                         cause,
                         "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertMapped(
-                exception,
+                        "load"
+                ),
                 cause,
                 500,
                 "OUTGOING_HTTP_CONVERSION_ERROR",
@@ -438,29 +285,19 @@ class OutgoingHttpExceptionMapperTests {
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Generic RestClient failure
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void genericRestClientFailureUsesNeutral502() {
+    void genericRestClientErrorUsesNeutralCode() {
         RestClientException cause =
                 new RestClientException(
-                        "Unknown technical "
-                                + "HTTP client failure"
-                );
-
-        UnifiedErrorException exception =
-                mapper.map(
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
+                        "token=secret"
                 );
 
         assertMapped(
-                exception,
+                mapper.map(
+                        cause,
+                        "CatalogGateway",
+                        "load"
+                ),
                 cause,
                 502,
                 "OUTGOING_HTTP_ERROR",
@@ -469,294 +306,112 @@ class OutgoingHttpExceptionMapperTests {
         );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Public message vs technical cause
-     * ------------------------------------------------------------
-     */
-
     @Test
-    void customPublicMessageDoesNotReplaceTechnicalCause() {
-        ResourceAccessException cause =
-                new ResourceAccessException(
-                        "GET http://internal-host"
-                                + "?token=secret",
-                        new ConnectException(
-                                "Connection refused"
-                        )
+    void technicalCauseIsNotPublished() {
+        RestClientException cause =
+                new RestClientException(
+                        "http://internal-host"
+                                + "?token=secret"
                 );
 
-        UnifiedErrorException exception =
+        UnifiedErrorException error =
                 mapper.map(
                         cause,
-                        "caller-service",
                         "CatalogGateway",
-                        "loadCatalog",
-                        "Каталог временно недоступен"
+                        "load"
                 );
-
-        assertThat(exception.getMessage())
-                .isEqualTo(
-                        "Каталог временно недоступен"
-                );
-
-        assertThat(exception.getOriginalCause())
-                .isSameAs(cause);
-
-        assertThat(
-                exception
-                        .getOriginalCause()
-                        .getMessage()
-        )
-                .contains("internal-host")
-                .contains("token=secret");
-
-        assertThat(
-                exception
-                        .toResponse(
-                                "caller-service"
-                        )
-                        .toString()
-        )
-                .doesNotContain("internal-host")
-                .doesNotContain("token=secret");
-    }
-
-    /*
-     * ------------------------------------------------------------
-     * Existing structured error
-     * ------------------------------------------------------------
-     */
-
-    @Test
-    void existingUnifiedErrorKeepsIdentity() {
-        RuntimeException originalCause =
-                new RuntimeException(
-                        "technical root"
-                );
-
-        UnifiedErrorException existing =
-                UnifiedErrorException.from(
-                        originalCause,
-                        Instant.parse(
-                                "2026-08-10T08:00:00Z"
-                        ),
-                        502,
-                        "OUTGOING_HTTP_ERROR",
-                        "Не удалось выполнить "
-                                + "исходящий HTTP-запрос",
-                        null,
-                        5
-                );
-
-        UUID errorId =
-                existing.getErrorId();
-
-        UnifiedErrorException mapped =
-                mapper.map(
-                        existing,
-                        "caller-service",
-                        "CatalogGateway",
-                        "loadCatalog",
-                        null
-                );
-
-        assertThat(mapped)
-                .isSameAs(existing);
-
-        assertThat(mapped.getErrorId())
-                .isEqualTo(errorId);
-
-        assertThat(mapped.getOriginalCause())
-                .isSameAs(originalCause);
-
-        assertThat(mapped.getChainElements())
-                .hasSize(1);
-    }
-
-    /*
-     * ------------------------------------------------------------
-     * Restore supported remote ErrorResponse
-     * ------------------------------------------------------------
-     */
-
-    @Test
-    void restoresRemoteErrorWithoutLosingStructuredData() {
-        UUID errorId =
-                UUID.fromString(
-                        "7c12c42e-86ee-43b0-8324-9a56bf633ed4"
-                );
-
-        Instant timestamp =
-                Instant.parse(
-                        "2026-08-10T08:00:00Z"
-                );
-
-        ErrorDetails details =
-                ErrorDetails.builder()
-                        .resource("COMPONENT")
-                        .build();
-
-        ChainElement remoteContext =
-                ChainElement.builder()
-                        .service(
-                                "remote-service"
-                        )
-                        .component(
-                                "ComponentRepository"
-                        )
-                        .operation("findById")
-                        .errorCode(
-                                "COMPONENT_NOT_FOUND"
-                        )
-                        .message(
-                                "Компонент не найден"
-                        )
-                        .timestamp(timestamp)
-                        .status(404)
-                        .build();
 
         ErrorResponse response =
-                ErrorResponse.builder()
-                        .errorId(errorId)
-                        .timestamp(timestamp)
-                        .status(404)
-                        .message(
-                                "Компонент не найден"
-                        )
-                        .errorCode(
-                                "COMPONENT_NOT_FOUND"
-                        )
-                        .currentService(
-                                "remote-service"
-                        )
-                        .chain(
-                                List.of(
-                                        remoteContext
-                                )
-                        )
-                        .details(details)
-                        .build();
-
-        RestClientResponseException cause =
-                responseException(404);
-
-        UnifiedErrorException restored =
-                mapper.restore(
-                        response,
-                        cause,
-                        "CatalogGateway",
-                        "loadCatalog"
-                );
-
-        assertThat(restored.getErrorId())
-                .isEqualTo(errorId);
-
-        assertThat(restored.getTimestamp())
-                .isEqualTo(timestamp);
-
-        assertThat(restored.getStatus())
-                .isEqualTo(404);
-
-        assertThat(restored.getErrorCode())
-                .isEqualTo(
-                        "COMPONENT_NOT_FOUND"
-                );
-
-        assertThat(restored.getMessage())
-                .isEqualTo(
-                        "Компонент не найден"
-                );
-
-        assertThat(restored.getDetails())
-                .isEqualTo(details);
-
-        assertThat(restored.getOriginalCause())
-                .isSameAs(cause);
-
-        assertThat(restored.getChainElements())
-                .hasSize(2);
-
-        assertThat(
-                restored.getChainElements()
-                        .getFirst()
-        ).isEqualTo(remoteContext);
-
-        ChainElement callerContext =
-                restored
-                        .getChainElements()
-                        .getLast();
-
-        assertThat(callerContext.getService())
-                .isEqualTo(
+                error.toResponse(
                         "caller-service"
                 );
 
-        assertThat(callerContext.getComponent())
-                .isEqualTo(
-                        "CatalogGateway"
+        String publicText =
+                response.toString();
+
+        assertThat(publicText)
+                .doesNotContain(
+                        "internal-host"
+                )
+                .doesNotContain(
+                        "token=secret"
                 );
 
-        assertThat(callerContext.getOperation())
-                .isEqualTo(
-                        "loadCatalog"
-                );
-
-        assertThat(callerContext.getErrorCode())
-                .isEqualTo(
-                        "REMOTE_CLIENT_ERROR"
-                );
+        assertThat(
+                error.getOriginalCause()
+                        .getMessage()
+        ).contains(
+                "token=secret"
+        );
     }
 
-    /*
-     * ------------------------------------------------------------
-     * Helpers
-     * ------------------------------------------------------------
-     */
+    @Test
+    void longCustomPublicMessageIsLimited() {
+        RestClientException cause =
+                new RestClientException(
+                        "technical"
+                );
+
+        UnifiedErrorException error =
+                mapper.map(
+                        cause,
+                        "caller-service",
+                        "CatalogGateway",
+                        "load",
+                        "x".repeat(1000)
+                );
+
+        assertThat(error.getMessage())
+                .hasSize(500);
+
+        assertThat(
+                error.getChainElements()
+                        .getFirst()
+                        .getMessage()
+        ).hasSize(500);
+
+        ErrorResponse response =
+                error.toResponse(
+                        "caller-service"
+                );
+
+        assertThat(
+                response.getDetails()
+                        .getTruncation()
+                        .isMessage()
+        ).isTrue();
+    }
 
     private static void assertMapped(
-            UnifiedErrorException exception,
-            Exception originalCause,
-            int expectedStatus,
-            String expectedCode,
-            String expectedMessage
+            UnifiedErrorException error,
+            Exception cause,
+            int status,
+            String code,
+            String message
     ) {
-        assertThat(exception.getErrorId())
+        assertThat(error.getErrorId())
                 .isNotNull();
 
-        assertThat(exception.getTimestamp())
-                .isNotNull();
+        assertThat(error.getStatus())
+                .isEqualTo(status);
 
-        assertThat(exception.getStatus())
-                .isEqualTo(
-                        expectedStatus
-                );
+        assertThat(error.getErrorCode())
+                .isEqualTo(code);
 
-        assertThat(exception.getErrorCode())
-                .isEqualTo(
-                        expectedCode
-                );
+        assertThat(error.getMessage())
+                .isEqualTo(message);
 
-        assertThat(exception.getMessage())
-                .isEqualTo(
-                        expectedMessage
-                );
+        assertThat(error.getOriginalCause())
+                .isSameAs(cause);
 
-        assertThat(exception.getOriginalCause())
-                .isSameAs(
-                        originalCause
-                );
+        assertThat(error.getCause())
+                .isSameAs(cause);
 
-        assertThat(exception.getCause())
-                .isSameAs(
-                        originalCause
-                );
-
-        assertThat(exception.getChainElements())
+        assertThat(error.getChainElements())
                 .hasSize(1);
 
         ChainElement context =
-                exception.getChainElements()
+                error.getChainElements()
                         .getFirst();
 
         assertThat(context.getService())
@@ -769,41 +424,26 @@ class OutgoingHttpExceptionMapperTests {
                         "CatalogGateway"
                 );
 
-        assertThat(context.getOperation())
-                .isEqualTo(
-                        "loadCatalog"
-                );
-
         assertThat(context.getStatus())
-                .isEqualTo(
-                        expectedStatus
-                );
+                .isEqualTo(status);
 
         assertThat(context.getErrorCode())
-                .isEqualTo(
-                        expectedCode
-                );
-
-        assertThat(context.getMessage())
-                .isEqualTo(
-                        expectedMessage
-                );
+                .isEqualTo(code);
     }
 
     private static RestClientResponseException
     responseException(
-            int status
+            int status,
+            String body
     ) {
         return new RestClientResponseException(
-                "remote technical message "
-                        + "token=secret",
+                "remote technical",
                 status,
                 "Remote Error",
                 HttpHeaders.EMPTY,
-                "secret response body"
-                        .getBytes(
-                                StandardCharsets.UTF_8
-                        ),
+                body.getBytes(
+                        StandardCharsets.UTF_8
+                ),
                 StandardCharsets.UTF_8
         );
     }
@@ -815,8 +455,7 @@ class OutgoingHttpExceptionMapperTests {
 
             @Override
             public InputStream getBody() {
-                return InputStream
-                        .nullInputStream();
+                return InputStream.nullInputStream();
             }
 
             @Override

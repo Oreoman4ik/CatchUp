@@ -5,11 +5,12 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.aop.support.AopUtils;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import ru.oreoman4ik.catchup.annotation.ErrorContext;
 import ru.oreoman4ik.catchup.client.OutgoingHttpExceptionMapper;
+import ru.oreoman4ik.catchup.config.CurrentServiceName;
+import ru.oreoman4ik.catchup.config.TechnicalDetailsFactory;
+import ru.oreoman4ik.catchup.config.UnifiedErrorProperties;
 import ru.oreoman4ik.catchup.model.BusinessException;
 import ru.oreoman4ik.catchup.model.ChainElement;
 import ru.oreoman4ik.catchup.model.UnifiedErrorException;
@@ -18,44 +19,113 @@ import java.lang.reflect.Method;
 import java.time.Instant;
 
 @Aspect
-@Component
 public final class ErrorContextAspect {
 
-    private static final int ABSOLUTE_MAX_CHAIN_SIZE = 100;
     private static final int DEFAULT_STATUS = 500;
 
     private static final String DEFAULT_ERROR_CODE =
             "INTERNAL_ERROR";
 
-    private static final String DEFAULT_MESSAGE =
-            "Внутренняя ошибка сервиса";
-
     private final String currentService;
+
     private final int maxChainSize;
-    private final OutgoingHttpExceptionMapper httpExceptionMapper;
+
+    private final String unknownErrorMessage;
+
+    private final OutgoingHttpExceptionMapper
+            httpExceptionMapper;
+
+    private final TechnicalDetailsFactory
+            technicalDetailsFactory;
 
     public ErrorContextAspect(
-            @Value("${spring.application.name:application}")
-            String currentService,
-
-            @Value("${catchup.errors.max-chain-size:10}")
-            int maxChainSize,
-
-            OutgoingHttpExceptionMapper httpExceptionMapper
+            CurrentServiceName currentService,
+            UnifiedErrorProperties properties,
+            OutgoingHttpExceptionMapper
+                    httpExceptionMapper,
+            TechnicalDetailsFactory
+                    technicalDetailsFactory
     ) {
+        if (currentService == null) {
+            throw new IllegalArgumentException(
+                    "currentService is required"
+            );
+        }
+
+        if (properties == null) {
+            throw new IllegalArgumentException(
+                    "properties is required"
+            );
+        }
+
+        if (httpExceptionMapper == null) {
+            throw new IllegalArgumentException(
+                    "httpExceptionMapper is required"
+            );
+        }
+
+        if (technicalDetailsFactory == null) {
+            throw new IllegalArgumentException(
+                    "technicalDetailsFactory is required"
+            );
+        }
+
         this.currentService =
-                validateServiceName(currentService);
+                currentService.value();
 
         this.maxChainSize =
-                validateMaxChainSize(maxChainSize);
+                properties.getMaxChainSize();
+
+        this.unknownErrorMessage =
+                properties
+                        .getUnknownErrorMessage();
 
         this.httpExceptionMapper =
                 httpExceptionMapper;
+
+        this.technicalDetailsFactory =
+                technicalDetailsFactory;
+    }
+
+    /*
+     * Совместимость с существующими unit-тестами.
+     */
+    public ErrorContextAspect(
+            String currentService,
+            int maxChainSize,
+            OutgoingHttpExceptionMapper
+                    httpExceptionMapper
+    ) {
+        UnifiedErrorProperties properties =
+                defaultProperties(
+                        maxChainSize
+                );
+
+        this.currentService =
+                CurrentServiceName
+                        .of(currentService)
+                        .value();
+
+        this.maxChainSize =
+                properties.getMaxChainSize();
+
+        this.unknownErrorMessage =
+                properties
+                        .getUnknownErrorMessage();
+
+        this.httpExceptionMapper =
+                httpExceptionMapper;
+
+        this.technicalDetailsFactory =
+                new TechnicalDetailsFactory(
+                        properties
+                );
     }
 
     @Around(
             value = "@annotation(errorContext)",
-            argNames = "joinPoint,errorContext"
+            argNames =
+                    "joinPoint,errorContext"
     )
     public Object addOperationContext(
             ProceedingJoinPoint joinPoint,
@@ -66,11 +136,14 @@ public final class ErrorContextAspect {
             return joinPoint.proceed();
 
         } catch (Exception cause) {
+
             /*
-             * Ловим только Exception.
+             * JVM Error намеренно не ловятся.
              *
-             * Error: сюда не попадут и продолжат распространяться
-             * без создания ErrorResponse/UUID/ChainElement.
+             * OutOfMemoryError,
+             * StackOverflowError,
+             * LinkageError и т.п.
+             * проходят дальше без оборачивания.
              */
             throw enrich(
                     cause,
@@ -85,13 +158,15 @@ public final class ErrorContextAspect {
             ProceedingJoinPoint joinPoint,
             ErrorContext annotation
     ) {
-        Context context = resolveContext(
-                joinPoint,
-                annotation
-        );
+        Context context =
+                resolveContext(
+                        joinPoint,
+                        annotation
+                );
 
         if (cause
-                instanceof UnifiedErrorException existing) {
+                instanceof
+                UnifiedErrorException existing) {
 
             String contextMessage =
                     publicMessageOrDefault(
@@ -99,7 +174,7 @@ public final class ErrorContextAspect {
                             existing.getMessage()
                     );
 
-            existing.addContext(
+            return existing.addContext(
                     chainElement(
                             context,
                             existing.getStatus(),
@@ -107,16 +182,11 @@ public final class ErrorContextAspect {
                             contextMessage
                     )
             );
-
-            return existing;
         }
 
-        /*
-         * Единственный источник классификации
-         * исходящих HTTP-ошибок.
-         */
         if (cause
-                instanceof RestClientException httpException) {
+                instanceof
+                RestClientException httpException) {
 
             return httpExceptionMapper.map(
                     httpException,
@@ -129,7 +199,9 @@ public final class ErrorContextAspect {
             );
         }
 
-        if (cause instanceof BusinessException business) {
+        if (cause
+                instanceof
+                BusinessException business) {
 
             String publicMessage =
                     publicMessageOrDefault(
@@ -143,7 +215,10 @@ public final class ErrorContextAspect {
                     business.getStatus(),
                     business.getErrorCode(),
                     publicMessage,
-                    business.getDetails(),
+                    technicalDetailsFactory.enrich(
+                            business.getDetails(),
+                            business
+                    ),
                     chainElement(
                             context,
                             business.getStatus(),
@@ -157,7 +232,7 @@ public final class ErrorContextAspect {
         String publicMessage =
                 publicMessageOrDefault(
                         annotation.message(),
-                        DEFAULT_MESSAGE
+                        unknownErrorMessage
                 );
 
         return UnifiedErrorException.from(
@@ -166,7 +241,10 @@ public final class ErrorContextAspect {
                 DEFAULT_STATUS,
                 DEFAULT_ERROR_CODE,
                 publicMessage,
-                null,
+                technicalDetailsFactory.enrich(
+                        null,
+                        cause
+                ),
                 chainElement(
                         context,
                         DEFAULT_STATUS,
@@ -182,23 +260,31 @@ public final class ErrorContextAspect {
             ErrorContext annotation
     ) {
         MethodSignature signature =
-                (MethodSignature) joinPoint.getSignature();
+                (MethodSignature)
+                        joinPoint
+                                .getSignature();
 
         Method method =
                 AopUtils.getMostSpecificMethod(
                         signature.getMethod(),
-                        joinPoint.getTarget().getClass()
+                        joinPoint
+                                .getTarget()
+                                .getClass()
                 );
 
         String service =
                 annotation.service().isBlank()
                         ? currentService
-                        : annotation.service().trim();
+                        : annotation
+                        .service()
+                        .trim();
 
         String operation =
                 annotation.operation().isBlank()
                         ? method.getName()
-                        : annotation.operation().trim();
+                        : annotation
+                        .operation()
+                        .trim();
 
         Class<?> targetClass =
                 AopUtils.getTargetClass(
@@ -219,9 +305,15 @@ public final class ErrorContextAspect {
             String message
     ) {
         return ChainElement.builder()
-                .service(context.service())
-                .component(context.component())
-                .operation(context.operation())
+                .service(
+                        context.service()
+                )
+                .component(
+                        context.component()
+                )
+                .operation(
+                        context.operation()
+                )
                 .errorCode(errorCode)
                 .message(message)
                 .timestamp(Instant.now())
@@ -229,17 +321,21 @@ public final class ErrorContextAspect {
                 .build();
     }
 
-    private static String optionalPublicMessage(
+    private static String
+    optionalPublicMessage(
             String value
     ) {
-        if (value == null || value.isBlank()) {
+        if (value == null
+                || value.isBlank()) {
+
             return null;
         }
 
         return value.trim();
     }
 
-    private static String publicMessageOrDefault(
+    private static String
+    publicMessageOrDefault(
             String value,
             String defaultMessage
     ) {
@@ -251,48 +347,18 @@ public final class ErrorContextAspect {
                 : message;
     }
 
-    private static String validateServiceName(
-            String value
+    private static UnifiedErrorProperties
+    defaultProperties(
+            int maxChainSize
     ) {
-        String normalized =
-                value == null || value.isBlank()
-                        ? "application"
-                        : value.trim();
+        UnifiedErrorProperties properties =
+                new UnifiedErrorProperties();
 
-        if (normalized.length() > 120) {
-            throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "exceed 120 characters"
-            );
-        }
+        properties.setMaxChainSize(
+                maxChainSize
+        );
 
-        if (normalized.indexOf('\r') >= 0
-                || normalized.indexOf('\n') >= 0
-                || normalized.indexOf('\t') >= 0) {
-
-            throw new IllegalArgumentException(
-                    "spring.application.name must not "
-                            + "contain control characters"
-            );
-        }
-
-        return normalized;
-    }
-
-    private static int validateMaxChainSize(
-            int value
-    ) {
-        if (value < 1
-                || value > ABSOLUTE_MAX_CHAIN_SIZE) {
-
-            throw new IllegalArgumentException(
-                    "catchup.errors.max-chain-size "
-                            + "must be from 1 to "
-                            + ABSOLUTE_MAX_CHAIN_SIZE
-            );
-        }
-
-        return value;
+        return properties;
     }
 
     private record Context(
