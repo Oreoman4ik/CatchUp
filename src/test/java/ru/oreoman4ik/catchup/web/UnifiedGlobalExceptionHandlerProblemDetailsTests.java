@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,6 +29,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                     "spring.mvc.problemdetails.enabled=true",
                     "spring.application.name=test-service"
             }
+    )
+    @ContextConfiguration(
+            classes = TestController.class
     )
     @ImportAutoConfiguration(
             UnifiedErrorAutoConfiguration.class
@@ -54,6 +58,9 @@ class UnifiedGlobalExceptionHandlerProblemDetailsTests {
                     "spring.mvc.problemdetails.enabled=false",
                     "spring.application.name=test-service"
             }
+    )
+    @ContextConfiguration(
+            classes = TestController.class
     )
     @ImportAutoConfiguration(
             UnifiedErrorAutoConfiguration.class
