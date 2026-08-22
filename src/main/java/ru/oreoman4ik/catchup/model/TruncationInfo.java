@@ -37,29 +37,51 @@ public final class TruncationInfo {
         );
     }
 
-    @JsonCreator
     public TruncationInfo(
-            @JsonProperty("chain")
             boolean chain,
-
-            @JsonProperty("message")
             boolean message,
-
-            @JsonProperty("technicalDetails")
             boolean technicalDetails,
-
-            @JsonProperty("remoteBody")
             boolean remoteBody,
-
-            @JsonProperty("data")
             boolean data
     ) {
         this.chain = chain;
         this.message = message;
-        this.technicalDetails =
-                technicalDetails;
+        this.technicalDetails = technicalDetails;
         this.remoteBody = remoteBody;
         this.data = data;
+    }
+
+    /**
+     * Отдельный JSON creator нужен, чтобы отсутствующие
+     * или null boolean-поля безопасно трактовались как false.
+     *
+     * Это особенно важно при NON_DEFAULT, поскольку false
+     * не сериализуется в JSON.
+     */
+    @JsonCreator
+    public static TruncationInfo fromJson(
+            @JsonProperty("chain")
+            Boolean chain,
+
+            @JsonProperty("message")
+            Boolean message,
+
+            @JsonProperty("technicalDetails")
+            Boolean technicalDetails,
+
+            @JsonProperty("remoteBody")
+            Boolean remoteBody,
+
+            @JsonProperty("data")
+            Boolean data
+    ) {
+        return new TruncationInfo(
+                Boolean.TRUE.equals(chain),
+                Boolean.TRUE.equals(message),
+                Boolean.TRUE.equals(technicalDetails),
+                Boolean.TRUE.equals(remoteBody),
+                Boolean.TRUE.equals(data)
+        );
     }
 
     public static TruncationInfo message() {
